@@ -465,3 +465,48 @@ def toggle_log_flag(conn: sqlite3.Connection, log_id: int, flag_id: int) -> bool
         (log_id, flag_id),
     )
     return True
+
+
+def set_log_flag_bulk(
+    conn: sqlite3.Connection, log_ids: list[int], flag_id: int, enabled: bool
+) -> None:
+    """Apply or remove a single flag for many logs in one transaction."""
+    if not log_ids:
+        return
+    if enabled:
+        conn.executemany(
+            "INSERT OR IGNORE INTO log_entry_flag(log_id, flag_id) VALUES (?, ?)",
+            [(lid, flag_id) for lid in log_ids],
+        )
+    else:
+        placeholders = ",".join("?" * len(log_ids))
+        conn.execute(
+            f"DELETE FROM log_entry_flag WHERE log_id IN ({placeholders}) AND flag_id = ?",
+            (*log_ids, flag_id),
+        )
+
+
+def count_logs_with_flag(
+    conn: sqlite3.Connection, log_ids: list[int]
+) -> dict[int, int]:
+    """Return {flag_id: how_many_of_log_ids_have_it}."""
+    if not log_ids:
+        return {}
+    placeholders = ",".join("?" * len(log_ids))
+    rows = conn.execute(
+        f"""
+        SELECT flag_id, COUNT(*) AS cnt
+        FROM log_entry_flag
+        WHERE log_id IN ({placeholders})
+        GROUP BY flag_id
+        """,
+        log_ids,
+    ).fetchall()
+    return {r["flag_id"]: int(r["cnt"]) for r in rows}
+
+
+def delete_logs_bulk(conn: sqlite3.Connection, log_ids: list[int]) -> None:
+    if not log_ids:
+        return
+    placeholders = ",".join("?" * len(log_ids))
+    conn.execute(f"DELETE FROM log_entry WHERE id IN ({placeholders})", log_ids)
