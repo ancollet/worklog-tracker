@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Virtual env (uv-managed)
+.venv/
+
+# Testing / caches
+.pytest_cache/
+
+# Local data / DB (XDG dirs are outside repo, but guard anyway)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-journal
+
+# IDE
+.vscode/
+.idea/
