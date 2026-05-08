@@ -8,7 +8,7 @@ from typing import Iterator
 
 from worklog.paths import db_path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 INITIAL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -80,11 +80,7 @@ CREATE TABLE IF NOT EXISTS log_entry_flag (
 CREATE INDEX IF NOT EXISTS idx_log_entry_flag_log ON log_entry_flag(log_id);
 """
 
-DEFAULT_FLAGS = [
-    ("gebucht", "#10B981", 10),
-    ("invoiced", "#3B82F6", 20),
-    ("canceled", "#EF4444", 30),
-]
+_LEGACY_DEFAULT_FLAG_NAMES = ("gebucht", "invoiced", "canceled")
 
 
 def connect(path: Path | str | None = None) -> sqlite3.Connection:
@@ -108,21 +104,21 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "INSERT OR IGNORE INTO app_state(id, running_log_id, last_project_id, default_round_minutes) "
             "VALUES (1, NULL, NULL, 15)"
         )
-        _seed_default_flags(conn)
     elif current < SCHEMA_VERSION:
-        # v1 → v2: flag tables already created via INITIAL_SCHEMA above; only seed
-        _seed_default_flags(conn)
+        if current < 3:
+            # v2 introduced auto-seeded flags; v3 removes them again. Drop the
+            # legacy defaults only if they exist *and* are unused (no log
+            # assignments and unmodified colors not relevant — name match is enough).
+            placeholders = ",".join("?" * len(_LEGACY_DEFAULT_FLAG_NAMES))
+            conn.execute(
+                f"""
+                DELETE FROM flag
+                WHERE name IN ({placeholders})
+                  AND id NOT IN (SELECT DISTINCT flag_id FROM log_entry_flag)
+                """,
+                _LEGACY_DEFAULT_FLAG_NAMES,
+            )
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
-
-
-def _seed_default_flags(conn: sqlite3.Connection) -> None:
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-    for name, color, sort_order in DEFAULT_FLAGS:
-        conn.execute(
-            "INSERT OR IGNORE INTO flag(name, color, sort_order, created_at) VALUES (?, ?, ?, ?)",
-            (name, color, sort_order, now),
-        )
 
 
 @contextmanager

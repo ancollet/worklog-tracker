@@ -83,20 +83,32 @@ def _make_chip(text: str, bg_hex: Optional[str], tooltip: Optional[str] = None) 
     return label
 
 
-def _make_chips_widget(log: LogEntry) -> QWidget:
+def _make_flags_widget(log: LogEntry) -> Optional[QWidget]:
+    """Return a widget with chips for each user-defined flag, or None if no flags."""
+    if not log.flags:
+        return None
     w = QWidget()
     layout = QHBoxLayout(w)
     layout.setContentsMargins(2, 1, 2, 1)
     layout.setSpacing(4)
-    project_text = log.project_name or "?"
-    tooltip = (
-        f"{log.customer_name} · {log.project_name}"
-        if log.customer_name and log.project_name
-        else (log.project_name or "")
-    )
-    layout.addWidget(_make_chip(project_text, log.project_color, tooltip=tooltip))
     for flag in log.flags:
         layout.addWidget(_make_chip(flag.name, flag.color))
+    layout.addStretch(1)
+    return w
+
+
+def _make_project_chip_widget(log: LogEntry) -> QWidget:
+    """Single chip showing 'Customer · Project' in project color."""
+    w = QWidget()
+    layout = QHBoxLayout(w)
+    layout.setContentsMargins(2, 1, 2, 1)
+    layout.setSpacing(0)
+    if log.customer_name and log.project_name:
+        text = f"{log.customer_name} · {log.project_name}"
+    else:
+        text = log.project_name or log.customer_name or "?"
+    tooltip = log.project_name or ""
+    layout.addWidget(_make_chip(text, log.project_color, tooltip=tooltip))
     layout.addStretch(1)
     return w
 
@@ -109,7 +121,8 @@ class RecentTree(QTreeWidget):
     flag_toggled = pyqtSignal(int, int)  # log_id, flag_id
     manage_flags_requested = pyqtSignal()
 
-    COLUMNS = ["Zeit", "Dauer", "Tags", "Task", "Beschreibung"]
+    COLUMNS = ["Zeit", "Dauer", "Task", "Beschreibung", "Kunde", "Tags"]
+    COL_TIME, COL_DURATION, COL_TASK, COL_DESC, COL_CUSTOMER, COL_TAGS = range(6)
 
     def __init__(self, conn: sqlite3.Connection, parent=None) -> None:
         super().__init__(parent)
@@ -118,12 +131,13 @@ class RecentTree(QTreeWidget):
         self.setRootIsDecorated(True)
         self.setSelectionBehavior(QTreeWidget.SelectionBehavior.SelectRows)
         header = self.header()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-        self.setColumnWidth(2, 220)
+        header.setSectionResizeMode(self.COL_TIME, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(self.COL_DURATION, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(self.COL_TASK, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(self.COL_DESC, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(self.COL_CUSTOMER, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(self.COL_TAGS, QHeaderView.ResizeMode.Interactive)
+        self.setColumnWidth(self.COL_TAGS, 180)
         self.itemDoubleClicked.connect(self._on_double_click)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
@@ -147,7 +161,8 @@ class RecentTree(QTreeWidget):
             month_total = sum(
                 (log.duration_seconds or 0) for day_logs in days.values() for log in day_logs
             )
-            month_item = QTreeWidgetItem([month_label, format_hm_short(month_total), "", "", ""])
+            month_row = [month_label, format_hm_short(month_total)] + [""] * (len(self.COLUMNS) - 2)
+            month_item = QTreeWidgetItem(month_row)
             for col in range(len(self.COLUMNS)):
                 month_item.setBackground(col, QColor("#E5E7EB"))
                 month_item.setFont(col, bold)
@@ -157,7 +172,8 @@ class RecentTree(QTreeWidget):
             for d, day_logs in days.items():
                 day_label = f"{WEEKDAY_NAMES_DE[d.weekday()]}, {d.strftime('%d.%m.%Y')}"
                 day_total = sum((log.duration_seconds or 0) for log in day_logs)
-                day_item = QTreeWidgetItem([day_label, format_hm_short(day_total), "", "", ""])
+                day_row = [day_label, format_hm_short(day_total)] + [""] * (len(self.COLUMNS) - 2)
+                day_item = QTreeWidgetItem(day_row)
                 italic = QFont()
                 italic.setItalic(True)
                 for col in range(len(self.COLUMNS)):
@@ -169,7 +185,10 @@ class RecentTree(QTreeWidget):
                 for log in day_logs:
                     leaf = self._build_leaf(log)
                     day_item.addChild(leaf)
-                    self.setItemWidget(leaf, 2, _make_chips_widget(log))
+                    self.setItemWidget(leaf, self.COL_CUSTOMER, _make_project_chip_widget(log))
+                    flags_widget = _make_flags_widget(log)
+                    if flags_widget is not None:
+                        self.setItemWidget(leaf, self.COL_TAGS, flags_widget)
 
     def _build_leaf(self, log: LogEntry) -> QTreeWidgetItem:
         time_str = "—"
@@ -179,10 +198,14 @@ class RecentTree(QTreeWidget):
             time_str = f"{log.started_at.strftime('%H:%M')}–…"
 
         duration = format_hm_short(log.duration_seconds) if log.duration_seconds else "läuft…"
-        leaf = QTreeWidgetItem([time_str, duration, "", log.task or "", log.description or ""])
+        leaf = QTreeWidgetItem(
+            [time_str, duration, log.task or "", log.description or "", "", ""]
+        )
         leaf.setData(0, Qt.ItemDataRole.UserRole, int(log.id))
-        leaf.setToolTip(4, log.description or "")
-        leaf.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        leaf.setToolTip(self.COL_DESC, log.description or "")
+        leaf.setTextAlignment(
+            self.COL_DURATION, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         return leaf
 
     def _on_double_click(self, item: QTreeWidgetItem, _col: int) -> None:

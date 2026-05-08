@@ -7,12 +7,9 @@ def _iso(dt: datetime) -> str:
     return dt.astimezone().isoformat(timespec="seconds")
 
 
-def test_default_flags_are_seeded(conn):
-    flags = repo.list_flags(conn)
-    names = [f.name for f in flags]
-    assert "gebucht" in names
-    assert "invoiced" in names
-    assert "canceled" in names
+def test_no_default_flags_seeded(conn):
+    """Fresh DBs ship without seeded flags — user defines their own."""
+    assert repo.list_flags(conn) == []
 
 
 def test_create_and_delete_custom_flag(conn):
@@ -34,7 +31,7 @@ def test_toggle_flag_on_log(conn):
         started_at=_iso(t), ended_at=_iso(t),
         duration_seconds=900, rounded_to_minutes=15, is_manual=False,
     )
-    gebucht = next(f for f in repo.list_flags(conn) if f.name == "gebucht")
+    gebucht = repo.create_flag(conn, name="gebucht", color="#10B981")
 
     assert gebucht.id not in repo.get_log_flag_ids(conn, log_id)
     new_state = repo.toggle_log_flag(conn, log_id, gebucht.id)
@@ -59,8 +56,8 @@ def test_list_logs_loads_flags_batch(conn):
         started_at=_iso(t), ended_at=_iso(t),
         duration_seconds=900, rounded_to_minutes=15, is_manual=False,
     )
-    gebucht = next(f for f in repo.list_flags(conn) if f.name == "gebucht")
-    invoiced = next(f for f in repo.list_flags(conn) if f.name == "invoiced")
+    gebucht = repo.create_flag(conn, name="gebucht", color="#10B981")
+    invoiced = repo.create_flag(conn, name="invoiced", color="#3B82F6")
     repo.set_log_flag(conn, log_a, gebucht.id, True)
     repo.set_log_flag(conn, log_a, invoiced.id, True)
     repo.set_log_flag(conn, log_b, gebucht.id, True)
