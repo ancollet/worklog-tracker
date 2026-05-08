@@ -1,0 +1,86 @@
+from datetime import datetime, timezone
+
+from worklog import repository as repo
+
+
+def _iso(dt: datetime) -> str:
+    return dt.astimezone().isoformat(timespec="seconds")
+
+
+def test_default_flags_are_seeded(conn):
+    flags = repo.list_flags(conn)
+    names = [f.name for f in flags]
+    assert "gebucht" in names
+    assert "invoiced" in names
+    assert "canceled" in names
+
+
+def test_create_and_delete_custom_flag(conn):
+    f = repo.create_flag(conn, name="urgent", color="#FF0000", sort_order=5)
+    assert f.id > 0
+    flags_after = [x.name for x in repo.list_flags(conn)]
+    assert "urgent" in flags_after
+    repo.delete_flag(conn, f.id)
+    flags_after_del = [x.name for x in repo.list_flags(conn)]
+    assert "urgent" not in flags_after_del
+
+
+def test_toggle_flag_on_log(conn):
+    c = repo.create_customer(conn, "Acme")
+    p = repo.create_project(conn, customer_id=c.id, name="Web")
+    t = datetime(2026, 5, 8, 10, tzinfo=timezone.utc)
+    log_id = repo.create_log(
+        conn, project_id=p.id, task="X", description=None,
+        started_at=_iso(t), ended_at=_iso(t),
+        duration_seconds=900, rounded_to_minutes=15, is_manual=False,
+    )
+    gebucht = next(f for f in repo.list_flags(conn) if f.name == "gebucht")
+
+    assert gebucht.id not in repo.get_log_flag_ids(conn, log_id)
+    new_state = repo.toggle_log_flag(conn, log_id, gebucht.id)
+    assert new_state is True
+    assert gebucht.id in repo.get_log_flag_ids(conn, log_id)
+    new_state = repo.toggle_log_flag(conn, log_id, gebucht.id)
+    assert new_state is False
+    assert gebucht.id not in repo.get_log_flag_ids(conn, log_id)
+
+
+def test_list_logs_loads_flags_batch(conn):
+    c = repo.create_customer(conn, "Acme")
+    p = repo.create_project(conn, customer_id=c.id, name="Web")
+    t = datetime(2026, 5, 8, 10, tzinfo=timezone.utc)
+    log_a = repo.create_log(
+        conn, project_id=p.id, task="A", description=None,
+        started_at=_iso(t), ended_at=_iso(t),
+        duration_seconds=900, rounded_to_minutes=15, is_manual=False,
+    )
+    log_b = repo.create_log(
+        conn, project_id=p.id, task="B", description=None,
+        started_at=_iso(t), ended_at=_iso(t),
+        duration_seconds=900, rounded_to_minutes=15, is_manual=False,
+    )
+    gebucht = next(f for f in repo.list_flags(conn) if f.name == "gebucht")
+    invoiced = next(f for f in repo.list_flags(conn) if f.name == "invoiced")
+    repo.set_log_flag(conn, log_a, gebucht.id, True)
+    repo.set_log_flag(conn, log_a, invoiced.id, True)
+    repo.set_log_flag(conn, log_b, gebucht.id, True)
+
+    logs = {l.id: l for l in repo.list_logs(conn)}
+    assert {f.name for f in logs[log_a].flags} == {"gebucht", "invoiced"}
+    assert {f.name for f in logs[log_b].flags} == {"gebucht"}
+
+
+def test_delete_flag_cascades(conn):
+    c = repo.create_customer(conn, "Acme")
+    p = repo.create_project(conn, customer_id=c.id, name="Web")
+    t = datetime(2026, 5, 8, tzinfo=timezone.utc)
+    log_id = repo.create_log(
+        conn, project_id=p.id, task=None, description=None,
+        started_at=_iso(t), ended_at=_iso(t),
+        duration_seconds=900, rounded_to_minutes=15, is_manual=False,
+    )
+    f = repo.create_flag(conn, name="temp")
+    repo.set_log_flag(conn, log_id, f.id, True)
+    assert f.id in repo.get_log_flag_ids(conn, log_id)
+    repo.delete_flag(conn, f.id)
+    assert f.id not in repo.get_log_flag_ids(conn, log_id)

@@ -6,13 +6,14 @@ from datetime import date, datetime
 from typing import Optional
 
 from PyQt6.QtCore import QTimer, QUrl, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QDesktopServices, QFont
+from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QTreeWidget,
@@ -59,45 +60,77 @@ def _week_bounds(now: datetime) -> tuple[datetime, datetime]:
     return monday, sunday_end
 
 
-def _soft_tint(hex_color: Optional[str]) -> Optional[QColor]:
-    """Mix the project color heavily with white for a readable row tint."""
-    if not hex_color:
-        return None
-    c = QColor(hex_color)
+def _readable_text_color(bg_hex: str) -> str:
+    """Return '#000' or '#fff' depending on background luminance."""
+    c = QColor(bg_hex)
     if not c.isValid():
-        return None
-    r = int(c.red() * 0.22 + 255 * 0.78)
-    g = int(c.green() * 0.22 + 255 * 0.78)
-    b = int(c.blue() * 0.22 + 255 * 0.78)
-    return QColor(r, g, b)
+        return "#000"
+    # Rec. 709 luma
+    luma = 0.2126 * c.red() + 0.7152 * c.green() + 0.0722 * c.blue()
+    return "#000" if luma > 160 else "#fff"
+
+
+def _make_chip(text: str, bg_hex: Optional[str], tooltip: Optional[str] = None) -> QLabel:
+    bg = bg_hex if bg_hex and QColor(bg_hex).isValid() else "#9CA3AF"
+    fg = _readable_text_color(bg)
+    label = QLabel(text)
+    label.setStyleSheet(
+        f"QLabel {{ background-color: {bg}; color: {fg}; "
+        f"padding: 2px 8px; border-radius: 8px; font-size: 11px; }}"
+    )
+    if tooltip:
+        label.setToolTip(tooltip)
+    return label
+
+
+def _make_chips_widget(log: LogEntry) -> QWidget:
+    w = QWidget()
+    layout = QHBoxLayout(w)
+    layout.setContentsMargins(2, 1, 2, 1)
+    layout.setSpacing(4)
+    project_text = log.project_name or "?"
+    tooltip = (
+        f"{log.customer_name} · {log.project_name}"
+        if log.customer_name and log.project_name
+        else (log.project_name or "")
+    )
+    layout.addWidget(_make_chip(project_text, log.project_color, tooltip=tooltip))
+    for flag in log.flags:
+        layout.addWidget(_make_chip(flag.name, flag.color))
+    layout.addStretch(1)
+    return w
 
 
 class RecentTree(QTreeWidget):
-    """Recent log entries grouped Month → Day → Entry, color-tinted by project."""
+    """Recent log entries grouped Month → Day → Entry, with Tags column (chips)."""
 
     edit_requested = pyqtSignal(int)
+    delete_requested = pyqtSignal(int)
+    flag_toggled = pyqtSignal(int, int)  # log_id, flag_id
+    manage_flags_requested = pyqtSignal()
 
-    COLUMNS = ["Zeit", "Dauer", "Projekt / Kunde", "Task", "Beschreibung"]
+    COLUMNS = ["Zeit", "Dauer", "Tags", "Task", "Beschreibung"]
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, conn: sqlite3.Connection, parent=None) -> None:
         super().__init__(parent)
+        self.conn = conn
         self.setHeaderLabels(self.COLUMNS)
         self.setRootIsDecorated(True)
-        self.setUniformRowHeights(True)
-        self.setAlternatingRowColors(False)
         self.setSelectionBehavior(QTreeWidget.SelectionBehavior.SelectRows)
         header = self.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self.setColumnWidth(2, 220)
         self.itemDoubleClicked.connect(self._on_double_click)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
 
     def populate(self, logs: list[LogEntry]) -> None:
         self.clear()
 
-        # Group: month → day → logs (insertion order = newest first since logs come DESC)
         months: "OrderedDict[tuple[int, int], OrderedDict[date, list[LogEntry]]]" = OrderedDict()
         for log in logs:
             if not log.started_at:
@@ -115,7 +148,6 @@ class RecentTree(QTreeWidget):
                 (log.duration_seconds or 0) for day_logs in days.values() for log in day_logs
             )
             month_item = QTreeWidgetItem([month_label, format_hm_short(month_total), "", "", ""])
-            month_item.setFirstColumnSpanned(False)
             for col in range(len(self.COLUMNS)):
                 month_item.setBackground(col, QColor("#E5E7EB"))
                 month_item.setFont(col, bold)
@@ -126,17 +158,18 @@ class RecentTree(QTreeWidget):
                 day_label = f"{WEEKDAY_NAMES_DE[d.weekday()]}, {d.strftime('%d.%m.%Y')}"
                 day_total = sum((log.duration_seconds or 0) for log in day_logs)
                 day_item = QTreeWidgetItem([day_label, format_hm_short(day_total), "", "", ""])
+                italic = QFont()
+                italic.setItalic(True)
                 for col in range(len(self.COLUMNS)):
                     day_item.setBackground(col, QColor("#F3F4F6"))
-                    f = QFont()
-                    f.setItalic(True)
-                    day_item.setFont(col, f)
+                    day_item.setFont(col, italic)
                 month_item.addChild(day_item)
                 day_item.setExpanded(True)
 
                 for log in day_logs:
                     leaf = self._build_leaf(log)
                     day_item.addChild(leaf)
+                    self.setItemWidget(leaf, 2, _make_chips_widget(log))
 
     def _build_leaf(self, log: LogEntry) -> QTreeWidgetItem:
         time_str = "—"
@@ -145,35 +178,60 @@ class RecentTree(QTreeWidget):
         elif log.started_at:
             time_str = f"{log.started_at.strftime('%H:%M')}–…"
 
-        duration = (
-            format_hm_short(log.duration_seconds) if log.duration_seconds else "läuft…"
-        )
-
-        project_str = ""
-        if log.customer_name and log.project_name:
-            project_str = f"{log.customer_name} · {log.project_name}"
-        elif log.project_name:
-            project_str = log.project_name
-
-        leaf = QTreeWidgetItem(
-            [time_str, duration, project_str, log.task or "", log.description or ""]
-        )
+        duration = format_hm_short(log.duration_seconds) if log.duration_seconds else "läuft…"
+        leaf = QTreeWidgetItem([time_str, duration, "", log.task or "", log.description or ""])
         leaf.setData(0, Qt.ItemDataRole.UserRole, int(log.id))
         leaf.setToolTip(4, log.description or "")
-
-        tint = _soft_tint(log.project_color)
-        if tint is not None:
-            for col in range(len(self.COLUMNS)):
-                leaf.setBackground(col, tint)
-
         leaf.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         return leaf
 
     def _on_double_click(self, item: QTreeWidgetItem, _col: int) -> None:
         log_id = item.data(0, Qt.ItemDataRole.UserRole)
+        if log_id is not None:
+            self.edit_requested.emit(int(log_id))
+
+    def _show_context_menu(self, pos) -> None:
+        item = self.itemAt(pos)
+        if item is None:
+            return
+        log_id = item.data(0, Qt.ItemDataRole.UserRole)
         if log_id is None:
             return
-        self.edit_requested.emit(int(log_id))
+        log_id = int(log_id)
+
+        menu = QMenu(self)
+        edit_act = QAction("✎  Bearbeiten…", menu)
+        edit_act.triggered.connect(lambda: self.edit_requested.emit(log_id))
+        menu.addAction(edit_act)
+
+        flags_menu = menu.addMenu("⚑  Flags")
+        enabled_ids = repo.get_log_flag_ids(self.conn, log_id)
+        flags = repo.list_flags(self.conn)
+        if not flags:
+            empty = QAction("(keine Flags)", flags_menu)
+            empty.setEnabled(False)
+            flags_menu.addAction(empty)
+        else:
+            for flag in flags:
+                act = QAction(flag.name, flags_menu)
+                act.setCheckable(True)
+                act.setChecked(flag.id in enabled_ids)
+                act.triggered.connect(
+                    lambda _checked=False, fid=flag.id, lid=log_id:
+                        self.flag_toggled.emit(lid, fid)
+                )
+                flags_menu.addAction(act)
+        flags_menu.addSeparator()
+        manage = QAction("⚙  Flags verwalten…", flags_menu)
+        manage.triggered.connect(self.manage_flags_requested.emit)
+        flags_menu.addAction(manage)
+
+        menu.addSeparator()
+        del_act = QAction("⌫  Löschen", menu)
+        del_act.triggered.connect(lambda: self.delete_requested.emit(log_id))
+        menu.addAction(del_act)
+
+        menu.exec(self.viewport().mapToGlobal(pos))
 
 
 class TimerWidget(QWidget):
@@ -210,6 +268,9 @@ class TimerWidget(QWidget):
 
         self.add_log_button = QPushButton("+ Add Log")
         self.add_log_button.clicked.connect(self.open_add_log)
+        self.flags_button = QPushButton("⚑ Flags")
+        self.flags_button.setToolTip("Benutzerdefinierte Flags verwalten")
+        self.flags_button.clicked.connect(self.open_flags_dialog)
         self.clockwork_button = QPushButton("↗ Jira Clockwork")
         self.clockwork_button.setToolTip("Öffnet den Clockwork 'My Work'-Report im Browser")
         self.clockwork_button.clicked.connect(self.open_clockwork)
@@ -217,8 +278,11 @@ class TimerWidget(QWidget):
         self.settings_button.clicked.connect(self.open_settings)
 
         self.summary_label = QLabel("Heute: —     ·     Diese Woche: —")
-        self.recent_tree = RecentTree(self)
+        self.recent_tree = RecentTree(conn, self)
         self.recent_tree.edit_requested.connect(self._edit_log)
+        self.recent_tree.delete_requested.connect(self._delete_log)
+        self.recent_tree.flag_toggled.connect(self._toggle_flag)
+        self.recent_tree.manage_flags_requested.connect(self.open_flags_dialog)
 
         # Layout
         outer = QVBoxLayout(self)
@@ -247,13 +311,14 @@ class TimerWidget(QWidget):
 
         outer.addWidget(self.summary_label)
 
-        recent_label = QLabel("Letzte Einträge   ·   Doppelklick zum Bearbeiten")
+        recent_label = QLabel("Letzte Einträge   ·   Doppelklick zum Bearbeiten · Rechtsklick für Flags")
         recent_label.setStyleSheet("color: #6B7280;")
         outer.addWidget(recent_label)
         outer.addWidget(self.recent_tree, 1)
 
         bottom = QHBoxLayout()
         bottom.addWidget(self.add_log_button)
+        bottom.addWidget(self.flags_button)
         bottom.addWidget(self.clockwork_button)
         bottom.addStretch(1)
         bottom.addWidget(self.settings_button)
@@ -263,7 +328,6 @@ class TimerWidget(QWidget):
         self.project_combo.currentIndexChanged.connect(self._on_project_changed)
         self.task_input.editingFinished.connect(self._refresh_desc_suggestions)
 
-        # 1Hz tick for live display
         self._tick = QTimer(self)
         self._tick.setInterval(1000)
         self._tick.timeout.connect(self._on_tick)
@@ -289,6 +353,12 @@ class TimerWidget(QWidget):
     def open_settings(self) -> None:
         from worklog.ui.settings_dialog import SettingsDialog
         dlg = SettingsDialog(self.conn, parent=self)
+        if dlg.exec():
+            self.changed.emit()
+
+    def open_flags_dialog(self) -> None:
+        from worklog.ui.flags_dialog import FlagsDialog
+        dlg = FlagsDialog(self.conn, parent=self)
         if dlg.exec():
             self.changed.emit()
 
@@ -323,6 +393,17 @@ class TimerWidget(QWidget):
         if dlg.exec():
             self.changed.emit()
 
+    def _delete_log(self, log_id: int) -> None:
+        confirm = QMessageBox.question(self, "Löschen?", "Diesen Eintrag wirklich löschen?")
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        repo.delete_log(self.conn, log_id)
+        self.changed.emit()
+
+    def _toggle_flag(self, log_id: int, flag_id: int) -> None:
+        repo.toggle_log_flag(self.conn, log_id, flag_id)
+        self.changed.emit()
+
     def _reload_projects(self) -> None:
         prev = self.current_project_id()
         self.project_combo.blockSignals(True)
@@ -330,7 +411,6 @@ class TimerWidget(QWidget):
         for proj in repo.list_projects(self.conn):
             self.project_combo.addItem(proj.display_name, proj.id)
         self.project_combo.blockSignals(False)
-        # restore selection
         state = repo.get_app_state(self.conn)
         target = prev if prev is not None else state.last_project_id
         if target is not None:

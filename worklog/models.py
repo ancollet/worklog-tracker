@@ -1,7 +1,7 @@
 """Plain dataclass models that mirror the DB rows."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
@@ -33,6 +33,15 @@ class Project:
 
 
 @dataclass(slots=True)
+class Flag:
+    id: int
+    name: str
+    color: Optional[str] = None
+    sort_order: int = 0
+    created_at: Optional[datetime] = None
+
+
+@dataclass(slots=True)
 class LogEntry:
     id: int
     project_id: int
@@ -49,6 +58,7 @@ class LogEntry:
     project_name: Optional[str] = None
     customer_name: Optional[str] = None
     project_color: Optional[str] = None
+    flags: list["Flag"] = field(default_factory=list)
 
 
 @dataclass(slots=True)

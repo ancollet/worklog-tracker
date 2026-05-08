@@ -8,7 +8,7 @@ from typing import Iterator
 
 from worklog.paths import db_path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 INITIAL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -62,7 +62,29 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS flag (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    color       TEXT,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS log_entry_flag (
+    log_id   INTEGER NOT NULL REFERENCES log_entry(id) ON DELETE CASCADE,
+    flag_id  INTEGER NOT NULL REFERENCES flag(id) ON DELETE CASCADE,
+    PRIMARY KEY (log_id, flag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_log_entry_flag_log ON log_entry_flag(log_id);
 """
+
+DEFAULT_FLAGS = [
+    ("gebucht", "#10B981", 10),
+    ("invoiced", "#3B82F6", 20),
+    ("canceled", "#EF4444", 30),
+]
 
 
 def connect(path: Path | str | None = None) -> sqlite3.Connection:
@@ -86,9 +108,21 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "INSERT OR IGNORE INTO app_state(id, running_log_id, last_project_id, default_round_minutes) "
             "VALUES (1, NULL, NULL, 15)"
         )
+        _seed_default_flags(conn)
     elif current < SCHEMA_VERSION:
-        # future migrations go here
+        # v1 → v2: flag tables already created via INITIAL_SCHEMA above; only seed
+        _seed_default_flags(conn)
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+
+
+def _seed_default_flags(conn: sqlite3.Connection) -> None:
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    for name, color, sort_order in DEFAULT_FLAGS:
+        conn.execute(
+            "INSERT OR IGNORE INTO flag(name, color, sort_order, created_at) VALUES (?, ?, ?, ?)",
+            (name, color, sort_order, now),
+        )
 
 
 @contextmanager

@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Iterable, Optional
 
-from worklog.models import AppState, Customer, LogEntry, Project
+from worklog.models import AppState, Customer, Flag, LogEntry, Project
 
 
 def _now_iso() -> str:
@@ -159,7 +159,11 @@ JOIN customer c ON c.id = p.customer_id
 
 def get_log(conn: sqlite3.Connection, log_id: int) -> Optional[LogEntry]:
     row = conn.execute(LOG_SELECT + " WHERE l.id = ?", (log_id,)).fetchone()
-    return _row_to_log(row) if row else None
+    if row is None:
+        return None
+    log = _row_to_log(row)
+    log.flags = _load_flags_for_logs(conn, [log.id]).get(log.id, [])
+    return log
 
 
 def list_logs(
@@ -185,7 +189,12 @@ def list_logs(
     if limit is not None:
         sql += " LIMIT ?"
         params.append(limit)
-    return [_row_to_log(r) for r in conn.execute(sql, params).fetchall()]
+    logs = [_row_to_log(r) for r in conn.execute(sql, params).fetchall()]
+    if logs:
+        flag_map = _load_flags_for_logs(conn, [l.id for l in logs])
+        for l in logs:
+            l.flags = flag_map.get(l.id, [])
+    return logs
 
 
 def create_log(
@@ -360,3 +369,99 @@ def sum_duration(conn: sqlite3.Connection, *, from_iso: str, to_iso: str) -> int
         (from_iso, to_iso),
     ).fetchone()
     return int(row["total"] or 0)
+
+
+# ---------- Flags ----------
+
+def _row_to_flag(row: sqlite3.Row) -> Flag:
+    return Flag(
+        id=row["id"],
+        name=row["name"],
+        color=row["color"],
+        sort_order=row["sort_order"],
+        created_at=_parse_dt(row["created_at"]),
+    )
+
+
+def list_flags(conn: sqlite3.Connection) -> list[Flag]:
+    rows = conn.execute("SELECT * FROM flag ORDER BY sort_order, name").fetchall()
+    return [_row_to_flag(r) for r in rows]
+
+
+def create_flag(conn: sqlite3.Connection, *, name: str, color: Optional[str] = None,
+                sort_order: int = 0) -> Flag:
+    cur = conn.execute(
+        "INSERT INTO flag(name, color, sort_order, created_at) VALUES (?, ?, ?, ?)",
+        (name, color, sort_order, _now_iso()),
+    )
+    fid = cur.lastrowid
+    return _row_to_flag(conn.execute("SELECT * FROM flag WHERE id = ?", (fid,)).fetchone())
+
+
+def update_flag(conn: sqlite3.Connection, flag_id: int, *, name: str,
+                color: Optional[str], sort_order: int) -> None:
+    conn.execute(
+        "UPDATE flag SET name = ?, color = ?, sort_order = ? WHERE id = ?",
+        (name, color, sort_order, flag_id),
+    )
+
+
+def delete_flag(conn: sqlite3.Connection, flag_id: int) -> None:
+    conn.execute("DELETE FROM flag WHERE id = ?", (flag_id,))
+
+
+def _load_flags_for_logs(conn: sqlite3.Connection, log_ids: list[int]) -> dict[int, list[Flag]]:
+    if not log_ids:
+        return {}
+    placeholders = ",".join("?" * len(log_ids))
+    rows = conn.execute(
+        f"""
+        SELECT lf.log_id, f.id, f.name, f.color, f.sort_order, f.created_at
+        FROM log_entry_flag lf
+        JOIN flag f ON f.id = lf.flag_id
+        WHERE lf.log_id IN ({placeholders})
+        ORDER BY f.sort_order, f.name
+        """,
+        log_ids,
+    ).fetchall()
+    out: dict[int, list[Flag]] = {}
+    for r in rows:
+        out.setdefault(r["log_id"], []).append(_row_to_flag(r))
+    return out
+
+
+def get_log_flag_ids(conn: sqlite3.Connection, log_id: int) -> set[int]:
+    rows = conn.execute("SELECT flag_id FROM log_entry_flag WHERE log_id = ?", (log_id,)).fetchall()
+    return {r["flag_id"] for r in rows}
+
+
+def set_log_flag(conn: sqlite3.Connection, log_id: int, flag_id: int, enabled: bool) -> None:
+    if enabled:
+        conn.execute(
+            "INSERT OR IGNORE INTO log_entry_flag(log_id, flag_id) VALUES (?, ?)",
+            (log_id, flag_id),
+        )
+    else:
+        conn.execute(
+            "DELETE FROM log_entry_flag WHERE log_id = ? AND flag_id = ?",
+            (log_id, flag_id),
+        )
+
+
+def toggle_log_flag(conn: sqlite3.Connection, log_id: int, flag_id: int) -> bool:
+    """Toggle a flag on/off. Returns the new state."""
+    row = conn.execute(
+        "SELECT 1 FROM log_entry_flag WHERE log_id = ? AND flag_id = ?",
+        (log_id, flag_id),
+    ).fetchone()
+    if row:
+        conn.execute(
+            "DELETE FROM log_entry_flag WHERE log_id = ? AND flag_id = ?",
+            (log_id, flag_id),
+        )
+        return False
+    conn.execute(
+        "INSERT INTO log_entry_flag(log_id, flag_id) VALUES (?, ?)",
+        (log_id, flag_id),
+    )
+    return True
