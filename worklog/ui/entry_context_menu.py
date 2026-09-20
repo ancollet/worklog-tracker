@@ -9,12 +9,12 @@ import sqlite3
 from typing import Callable, Optional
 
 from PyQt6.QtCore import QEvent, QObject, Qt
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QGuiApplication
 from PyQt6.QtWidgets import QAbstractItemView, QMenu, QMessageBox, QWidget
 
 from worklog import repository as repo
 from worklog.models import LogEntry
-from worklog.services.entry_menu import flag_menu_state, plan_entry_menu
+from worklog.services.entry_menu import clipboard_text, flag_menu_state, plan_entry_menu
 from worklog.services.timer import (
     AlreadyRunningError,
     ProjectArchivedError,
@@ -116,6 +116,13 @@ def build_entry_context_menu(
     if plan.can_edit:
         edit_act.triggered.connect(lambda _checked=False: on_edit(log_ids[0]))
     menu.addAction(edit_act)
+
+    copy_act = QAction("⧉  Beschreibung kopieren", menu)
+    copy_act.setEnabled(plan.can_copy_description)
+    copy_act.triggered.connect(
+        lambda _checked=False: QGuiApplication.clipboard().setText(clipboard_text(logs))
+    )
+    menu.addAction(copy_act)
 
     anchor = next((log for log in logs if log.id == move_anchor_id), None)
     if anchor is not None:

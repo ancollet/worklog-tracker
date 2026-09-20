@@ -8,10 +8,10 @@ Spec: `.scratch/eintrags-workflow/spec.md` (Stories 28–32).
 
 **Status:** ready-for-agent
 
-- [ ] Menüpunkt "Beschreibung kopieren" direkt unter "Bearbeiten…", in beiden Tabs.
-- [ ] Ein Eintrag: die Beschreibung steht unverändert in der Zwischenablage.
-- [ ] Mehrere Einträge: eine Beschreibung pro Zeile, in der Reihenfolge der Ansicht; leere Beschreibungen werden übersprungen, Duplikate bleiben erhalten.
-- [ ] Hat keiner der betroffenen Einträge eine Beschreibung, ist der Menüpunkt deaktiviert.
-- [ ] Der Zwischenablage-Text entsteht in einer reinen Funktion (geordnete Einträge → Text), die beide Ansichten nutzen.
-- [ ] Funktioniert auch für gebuchte und laufende Einträge.
-- [ ] Tests für die reine Funktion: ein Eintrag, mehrere, leere dazwischen, nur leere, Duplikate, mehrzeilige Beschreibung.
+- [x] Menüpunkt "Beschreibung kopieren" direkt unter "Bearbeiten…", in beiden Tabs.
+- [x] Ein Eintrag: die Beschreibung steht unverändert in der Zwischenablage.
+- [x] Mehrere Einträge: eine Beschreibung pro Zeile, in der Reihenfolge der Ansicht; leere Beschreibungen werden übersprungen, Duplikate bleiben erhalten.
+- [x] Hat keiner der betroffenen Einträge eine Beschreibung, ist der Menüpunkt deaktiviert.
+- [x] Der Zwischenablage-Text entsteht in einer reinen Funktion (geordnete Einträge → Text), die beide Ansichten nutzen.
+- [x] Funktioniert auch für gebuchte und laufende Einträge.
+- [x] Tests für die reine Funktion: ein Eintrag, mehrere, leere dazwischen, nur leere, Duplikate, mehrzeilige Beschreibung.

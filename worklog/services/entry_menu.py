@@ -12,6 +12,7 @@ class EntryMenuPlan:
     header: str
     can_continue: bool
     can_edit: bool
+    can_copy_description: bool
     jira_action: Optional[str]  # "book" | "unbook" | None
     delete_label: str
 
@@ -42,8 +43,16 @@ def plan_entry_menu(logs: list[LogEntry]) -> EntryMenuPlan:
         # Fortsetzen: exactly one entry, and not one that is still running.
         can_continue=n == 1 and logs[0].ended_at is not None,
         can_edit=n == 1,
+        can_copy_description=bool(clipboard_text(logs)),
         jira_action=jira_action,
         delete_label="⌫  Löschen" if n == 1 else f"⌫  {n} Einträge löschen",
+    )
+
+
+def clipboard_text(logs: list[LogEntry]) -> str:
+    """Text for "Beschreibung kopieren" of `logs` (in displayed order)."""
+    return "\n".join(
+        log.description for log in logs if log.description and log.description.strip()
     )
 
 
