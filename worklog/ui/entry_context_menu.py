@@ -245,7 +245,8 @@ def build_entry_context_menu(
             menu.setToolTipsVisible(True)  # the reason why booking is disabled
             add_booking_action(
                 "In Salesforce buchen…",
-                lambda parent_, conn_, log_id: book_salesforce(parent_, conn_, [log_id]),
+                # One Eintrag or a Sammelbuchung: the Buchungsdialog gets the whole selection.
+                lambda parent_, conn_, _log_id: book_salesforce(parent_, conn_, log_ids),
                 plan.booking_disabled_reason,
             )
         if plan.booking_url is not None:
