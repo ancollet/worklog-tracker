@@ -1,7 +1,13 @@
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from worklog.models import LogEntry
-from worklog.services.entry_menu import flag_menu_state, plan_entry_menu, target_log_ids
+from worklog.services.entry_menu import (
+    clipboard_text,
+    flag_menu_state,
+    plan_entry_menu,
+    target_log_ids,
+)
 
 
 def _entry(log_id: int, *, booking_system=None, worklog_id=None, running=False) -> LogEntry:
@@ -97,3 +103,56 @@ def test_flag_on_some_entries_is_shown_as_mixed_and_click_sets_it_everywhere():
     assert state.label == "abgerechnet  (gemischt: 1/3)"
     assert state.checked is False
     assert state.new_state is True
+
+
+# ---------- Beschreibung kopieren ----------
+
+def _described(log_id: int, description, **kwargs) -> LogEntry:
+    return replace(_entry(log_id, **kwargs), description=description)
+
+
+def test_clipboard_text_of_one_entry_is_its_description_verbatim():
+    assert clipboard_text([_described(1, "  Deploy & Review ")]) == "  Deploy & Review "
+
+
+def test_clipboard_text_of_several_entries_is_one_description_per_line_in_order():
+    logs = [_described(3, "Zuerst"), _described(1, "Dann"), _described(2, "Zuletzt")]
+    assert clipboard_text(logs) == "Zuerst\nDann\nZuletzt"
+
+
+def test_clipboard_text_skips_empty_descriptions_in_between():
+    logs = [_described(1, "A"), _described(2, None), _described(3, ""),
+            _described(4, "  \n "), _described(5, "B")]
+    assert clipboard_text(logs) == "A\nB"
+
+
+def test_clipboard_text_of_only_empty_descriptions_is_empty():
+    assert clipboard_text([_described(1, None), _described(2, " ")]) == ""
+
+
+def test_clipboard_text_keeps_duplicates():
+    logs = [_described(1, "Daily"), _described(2, "Daily"), _described(3, "Review")]
+    assert clipboard_text(logs) == "Daily\nDaily\nReview"
+
+
+def test_clipboard_text_keeps_multiline_description_verbatim():
+    logs = [_described(1, "Zeile 1\nZeile 2\n"), _described(2, "B")]
+    assert clipboard_text(logs) == "Zeile 1\nZeile 2\n\nB"
+
+
+def test_copy_description_is_enabled_when_any_entry_has_a_description():
+    plan = plan_entry_menu([_described(1, None), _described(2, "B")])
+    assert plan.can_copy_description is True
+
+
+def test_copy_description_is_disabled_when_no_entry_has_a_description():
+    plan = plan_entry_menu([_described(1, None), _described(2, ""), _described(3, "  ")])
+    assert plan.can_copy_description is False
+
+
+def test_copy_description_stays_enabled_for_booked_and_running_entries():
+    booked = _described(1, "A", booking_system="jira", worklog_id="10001")
+    running = _described(2, "B", running=True)
+    assert plan_entry_menu([booked]).can_copy_description is True
+    assert plan_entry_menu([running]).can_copy_description is True
+    assert clipboard_text([booked, running]) == "A\nB"
