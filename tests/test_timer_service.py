@@ -205,3 +205,15 @@ def test_single_timer_interface_is_gone(conn):
     svc = TimerService(conn)
     for name in ("current", "is_running", "start", "stop", "update_running", "switch"):
         assert not hasattr(svc, name), name
+
+
+def test_start_entry_refuses_an_archived_project(conn):
+    from worklog.services.timer import ProjectArchivedError
+
+    p = _project(conn)
+    repo.update_project(
+        conn, p.id, name=p.name, color=p.color, round_minutes=p.round_minutes, archived=True
+    )
+    with pytest.raises(ProjectArchivedError):
+        TimerService(conn).start_entry(project_id=p.id, task="A", description=None)
+    assert TimerService(conn).running_entries() == []

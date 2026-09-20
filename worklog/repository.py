@@ -116,10 +116,40 @@ def update_customer(
     booking_system: Optional[str] = None,
     external_ref: Optional[str] = None,
 ) -> None:
+    _ensure_booking_system_may_become(conn, customer_id, booking_system)
     conn.execute(
         "UPDATE customer SET name = ?, booking_system = ?, external_ref = ?, archived = ? WHERE id = ?",
         (name, booking_system, external_ref, int(archived), customer_id),
     )
+
+
+class BookingSystemLockedError(Exception):
+    """The Buchungssystem of a Kunde with gebuchte Einträge cannot change: a Buchung
+    belongs to the system it was made in, and only there it can be storniert."""
+
+    def __init__(self, count: int) -> None:
+        super().__init__(
+            f"Der Kunde hat {count} gebuchte{'n Eintrag' if count == 1 else ' Einträge'} — "
+            "erst die Buchungen stornieren, dann das Buchungssystem ändern."
+        )
+        self.count = count
+
+
+def _ensure_booking_system_may_become(
+    conn: sqlite3.Connection, customer_id: int, booking_system: Optional[str]
+) -> None:
+    row = conn.execute("SELECT booking_system FROM customer WHERE id = ?", (customer_id,)).fetchone()
+    if row is None or (row["booking_system"] or None) == (booking_system or None):
+        return
+    count = conn.execute(
+        """
+        SELECT COUNT(*) FROM log_entry l JOIN project p ON p.id = l.project_id
+        WHERE p.customer_id = ? AND l.external_worklog_id IS NOT NULL AND l.external_worklog_id <> ''
+        """,
+        (customer_id,),
+    ).fetchone()[0]
+    if count:
+        raise BookingSystemLockedError(count)
 
 
 def delete_customer(conn: sqlite3.Connection, customer_id: int) -> None:
@@ -138,6 +168,7 @@ def set_customer_salesforce_account(
 
     Raises sqlite3.IntegrityError if the Account-ID already hangs on another Kunde.
     """
+    _ensure_booking_system_may_become(conn, customer_id, "salesforce")
     conn.execute(
         "UPDATE customer SET booking_system = 'salesforce', external_ref = ?, external_name = ? WHERE id = ?",
         (account_id, account_name or None, customer_id),
@@ -768,6 +799,9 @@ def _checked_snippet_text(
     cleaned = text.strip()
     if not cleaned:
         raise SnippetTextError("Snippet-Text darf nicht leer sein.")
+    if "," in cleaned or ":" in cleaned:
+        # "," separates the snippets of a prefix and ":" ends it.
+        raise SnippetTextError("Snippet-Text darf weder Komma noch Doppelpunkt enthalten.")
     for other in list_snippets(conn):
         if other.id != ignore_id and other.text.casefold() == cleaned.casefold():
             raise SnippetTextError("Snippet mit diesem Text existiert bereits.")

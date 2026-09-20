@@ -45,6 +45,15 @@ def _shift_days(moment: datetime, days: int) -> datetime:
     return wall.astimezone()
 
 
+def _shift_span(started: datetime, ended: datetime, days: int) -> tuple[datetime, datetime]:
+    """Start and end `days` later. If the start falls into the spring-forward gap and
+    is pushed one hour on, the end follows it, so the entry keeps its length."""
+    new_start, new_end = _shift_days(started, days), _shift_days(ended, days)
+    if new_start.replace(tzinfo=None) != started.replace(tzinfo=None) + timedelta(days=days):
+        new_end = (new_start + (ended - started)).astimezone()
+    return new_start, new_end
+
+
 def move_entries_to_date(conn: sqlite3.Connection, log_ids: list[int], target: date) -> None:
     """Put every entry on `target` (the day of its start), keeping its time of day.
 
@@ -61,11 +70,12 @@ def move_entries_to_date(conn: sqlite3.Connection, log_ids: list[int], target: d
     conn.execute("BEGIN")
     try:
         for log, days in moves:
+            new_start, new_end = _shift_span(log.started_at, log.ended_at, days)
             repo.update_log(
                 conn, int(log.id),
                 project_id=log.project_id, task=log.task, description=log.description,
-                started_at=_shift_days(log.started_at, days).isoformat(timespec="seconds"),
-                ended_at=_shift_days(log.ended_at, days).isoformat(timespec="seconds"),
+                started_at=new_start.isoformat(timespec="seconds"),
+                ended_at=new_end.isoformat(timespec="seconds"),
                 duration_seconds=log.duration_seconds,
                 rounded_to_minutes=log.rounded_to_minutes,
             )

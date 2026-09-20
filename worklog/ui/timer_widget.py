@@ -33,7 +33,7 @@ from worklog.services.move import (
     move_entries_to_date,
 )
 from worklog.services.rounding import format_hm_short, format_hms
-from worklog.services.timer import AlreadyRunningError, TimerService, manual_log
+from worklog.services.timer import AlreadyRunningError, ProjectArchivedError, TimerService, manual_log
 from worklog.ui.completers import (
     make_description_completer,
     make_task_completer,
@@ -635,6 +635,9 @@ class TimerWidget(QWidget):
             )
         except AlreadyRunningError:
             self._show_start_hint("Dieser Eintrag läuft bereits.")
+            return
+        except ProjectArchivedError:   # archived elsewhere since the form was filled
+            self._show_start_hint("Projekt ist archiviert.")
             return
         self._show_start_hint("")
         # Projekt bleibt; Task und Beschreibung gehören zum gestarteten Eintrag.

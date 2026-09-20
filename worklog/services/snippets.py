@@ -14,7 +14,10 @@ def _split_prefix(description: str, known_snippets: Iterable[str]) -> tuple[list
     """
     head, sep, rest = description.partition(_SEPARATOR)
     if not sep:
-        return [], description
+        # A prefix without text is stored trimmed: "Codereview: " comes back as "Codereview:".
+        if not description.endswith(_SEPARATOR.strip()):
+            return [], description
+        head, rest = description[: -len(_SEPARATOR.strip())], ""
     known = {s.strip().casefold() for s in known_snippets}
     parts = [p.strip() for p in head.split(",")]
     if all(p and p.casefold() in known for p in parts):

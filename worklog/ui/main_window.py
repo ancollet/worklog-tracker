@@ -28,7 +28,7 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget(self)
         self.timer_tab = TimerWidget(conn, timer, self)
-        self.logs_tab = LogsView(conn, timer, self)
+        self.logs_tab = LogsView(conn, self)
         self.customers_tab = CustomersView(conn, self)
         self.analytics_tab = AnalyticsView(conn, self)
 

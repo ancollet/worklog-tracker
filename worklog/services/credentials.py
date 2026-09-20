@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import Optional
 
 import keyring
-from keyring.errors import KeyringError
 
 SERVICE_NAME = "worklog"
 
@@ -31,8 +30,8 @@ class CredentialsUnavailableError(RuntimeError):
 def _wrap(call):
     try:
         return call()
-    except KeyringError as exc:
-        raise CredentialsUnavailableError(str(exc)) from exc
+    except Exception as exc:  # backends also fail with D-Bus/OS errors that are no KeyringError
+        raise CredentialsUnavailableError(str(exc) or type(exc).__name__) from exc
 
 
 def get_secret(key: str) -> Optional[str]:

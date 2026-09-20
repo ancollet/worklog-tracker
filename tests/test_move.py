@@ -70,6 +70,19 @@ def test_move_across_dst_boundary_keeps_wall_clock_and_stored_duration(conn):
     assert row["duration_seconds"] == 3600
 
 
+def test_move_into_the_spring_forward_gap_keeps_the_entry_its_length(conn):
+    p = _project(conn)
+    # 02:30 does not exist on 2026-03-29 (02:00 → 03:00): the start lands one hour later,
+    # and the end must not collapse onto it.
+    log_id = _entry(conn, p, "2026-03-27T02:30:00+01:00", "2026-03-27T03:30:00+01:00")
+
+    move_entries_to_date(conn, [log_id], date(2026, 3, 29))
+
+    row = conn.execute("SELECT started_at, ended_at FROM log_entry WHERE id = ?", (log_id,)).fetchone()
+    assert row["started_at"] == "2026-03-29T03:30:00+02:00"
+    assert row["ended_at"] == "2026-03-29T04:30:00+02:00"
+
+
 def _stored_times(conn) -> list[tuple]:
     return [
         tuple(r) for r in conn.execute("SELECT id, started_at, ended_at FROM log_entry ORDER BY id")

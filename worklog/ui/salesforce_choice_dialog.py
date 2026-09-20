@@ -10,6 +10,7 @@ registrieren).
 """
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -290,6 +291,9 @@ class SalesforceChoiceDialog(QDialog):
             self._apply(chosen)
         except registration.RegistrationError as exc:
             self._set_status(str(exc), "error")
+            return
+        except sqlite3.Error as exc:   # e.g. registered elsewhere in the meantime
+            self._set_status(f"Konnte nicht gespeichert werden: {exc}", "error")
             return
         self.accept()
 

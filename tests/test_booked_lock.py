@@ -161,3 +161,40 @@ def test_cancel_hint_for_jira_says_the_worklog_stays_in_jira(conn):
     booked = repo.get_log(conn, _entry(conn, _project(conn, "jira"), booked=True))
 
     assert "Worklog in Jira bleibt bestehen" in cancel_booking_hint(booked)
+
+
+# ---------- Buchungssystem des Kunden bei gebuchten Einträgen ----------
+
+def test_booking_system_cannot_change_while_the_customer_has_booked_entries(conn):
+    project_id = _project(conn, booking_system="jira")
+    _entry(conn, project_id, booked=True)
+    customer = repo.list_customers(conn)[0]
+
+    for system in ("salesforce", None):
+        with pytest.raises(repo.BookingSystemLockedError):
+            repo.update_customer(conn, customer.id, name="Acme", archived=False, booking_system=system)
+    with pytest.raises(repo.BookingSystemLockedError):
+        repo.set_customer_salesforce_account(conn, customer.id, account_id="001AA0000000001", account_name="Acme")
+
+    assert repo.get_customer(conn, customer.id).booking_system == "jira"
+
+
+def test_everything_else_of_such_a_customer_can_still_change(conn):
+    project_id = _project(conn, booking_system="jira")
+    _entry(conn, project_id, booked=True)
+    customer = repo.list_customers(conn)[0]
+
+    repo.update_customer(conn, customer.id, name="Acme AG", archived=True, booking_system="jira", external_ref="ACME")
+
+    stored = repo.get_customer(conn, customer.id)
+    assert (stored.name, stored.archived, stored.external_ref) == ("Acme AG", True, "ACME")
+
+
+def test_booking_system_can_change_once_nothing_is_booked(conn):
+    project_id = _project(conn, booking_system="jira")
+    _entry(conn, project_id, booked=False)
+    customer = repo.list_customers(conn)[0]
+
+    repo.update_customer(conn, customer.id, name="Acme", archived=False, booking_system=None)
+
+    assert repo.get_customer(conn, customer.id).booking_system is None

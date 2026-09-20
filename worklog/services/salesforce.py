@@ -12,6 +12,7 @@ module only. Callers talk in domain terms, never in SOQL.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.parse
@@ -65,6 +66,12 @@ class SalesforceError(RuntimeError):
 
 class SalesforceNetworkError(SalesforceError):
     """Netz nicht erreichbar — DNS, no connection, timeout."""
+
+    maybe_delivered = False  # True: the request may have reached Salesforce although no answer came back
+
+
+# What can go wrong after the request left: the answer is lost, not necessarily the request.
+_MAYBE_DELIVERED = (TimeoutError, ConnectionResetError, ConnectionAbortedError, http.client.HTTPException)
 
 
 class SalesforceAuthError(SalesforceError):
@@ -216,6 +223,19 @@ def _org_error(exc: urllib.error.HTTPError) -> SalesforceOrgError:
 
 # ---- Kostenposition löschen (Ticket 10, Stornieren): outcomes other than "deleted" ----
 
+class CostItemOutcomeUnknownError(SalesforceError):
+    """The answer to creating a Kostenposition got lost: it may exist or not.
+
+    Never to be retried blindly — a second attempt could create a second Kostenposition.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Unklar, ob die Kostenposition angelegt wurde (keine Antwort von Salesforce). "
+            "Bitte in Salesforce prüfen, bevor erneut gebucht wird."
+        )
+
+
 class CostItemNotFoundError(SalesforceError):
     """The Kostenposition does not exist in Salesforce (any more) — e.g. deleted there by hand."""
 
@@ -366,10 +386,16 @@ class SalesforceClient:
         }
         if draft.customer_request_type.strip():
             fields[COST_ITEM_REQUEST_TYPE_FIELD] = draft.customer_request_type.strip()
-        data = self._call("POST", f"/services/data/{API_VERSION}/sobjects/{COST_ITEM_OBJECT}", body=fields)
+        try:
+            data = self._call("POST", f"/services/data/{API_VERSION}/sobjects/{COST_ITEM_OBJECT}", body=fields)
+        except SalesforceNetworkError as exc:
+            if exc.maybe_delivered:
+                raise CostItemOutcomeUnknownError() from exc
+            raise
         record_id = str(data.get("id") or "") if isinstance(data, dict) else ""
         if not record_id:
-            raise SalesforceError("Salesforce hat das Anlegen der Kostenposition nicht bestätigt.")
+            # Salesforce answered 2xx without an ID: it may exist all the same.
+            raise CostItemOutcomeUnknownError()
         return CostItem(id=record_id, number=self._cost_item_number(record_id), url=self.cost_item_url(record_id))
 
     def cost_item_url(self, cost_item_id: str) -> str:
@@ -516,9 +542,12 @@ class SalesforceClient:
                 body = resp.read().decode("utf-8")
         except urllib.error.HTTPError:
             raise
-        except (urllib.error.URLError, OSError) as exc:
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             reason = getattr(exc, "reason", None) or exc
-            raise SalesforceNetworkError(f"Salesforce ist nicht erreichbar: {reason}") from exc
+            error = SalesforceNetworkError(f"Salesforce ist nicht erreichbar: {reason}")
+            # Timeout, reset or a broken answer: the request may well have arrived.
+            error.maybe_delivered = isinstance(reason, _MAYBE_DELIVERED)
+            raise error from exc
         if not body.strip():
             return None
         try:

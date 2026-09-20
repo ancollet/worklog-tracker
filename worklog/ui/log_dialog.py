@@ -273,7 +273,7 @@ class LogDialog(QDialog):
     def _set_read_only(self, reason: str) -> None:
         """Gebuchter Eintrag: show it, but nothing can be changed or saved."""
         self._booked = True
-        self.setWindowTitle("Log ansehen (gebucht)")
+        self.setWindowTitle("Eintrag ansehen (gebucht)")
         self.booked_hint.setText(f"🔒 {reason}.")
         self.booked_hint.setVisible(True)
         for widget in (

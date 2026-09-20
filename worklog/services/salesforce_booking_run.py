@@ -15,6 +15,7 @@ from worklog import repository as repo
 from worklog.services import salesforce_booking as booking
 from worklog.services.salesforce import (
     CostItem,
+    CostItemOutcomeUnknownError,
     SalesforceAuthError,
     SalesforceError,
     SalesforceNetworkError,
@@ -32,6 +33,7 @@ OPEN = "open"            # buchbar, not tried yet
 BLOCKED = "blocked"      # not buchbar, `message` says why; never sent
 FAILED = "failed"        # tried without success, `message` says why; may be corrected and sent again
 NOT_RUN = "not_run"      # the run stopped before this row; nothing was sent for it
+UNKNOWN = "unknown"      # the answer to the create got lost: may exist in Salesforce; never sent again
 UNSAVED = "unsaved"      # the Kostenposition exists, but is not written to the Eintrag yet; never sent again
 BOOKED = "booked"        # gebucht and written to the Eintrag; `message` is the Nummer of the Kostenposition
 
@@ -182,7 +184,8 @@ class BookingRun:
         if isinstance(outcome, CostItem):
             self._record(row, prepared, outcome)
         else:
-            row.state, row.message = FAILED, _error_text(outcome)
+            unknown = isinstance(outcome, CostItemOutcomeUnknownError)
+            row.state, row.message = (UNKNOWN if unknown else FAILED), _error_text(outcome)
             if isinstance(outcome, _CONCERNS_EVERY_ROW):
                 # Anmeldung or Netz: the next row would fail the same way, so it is not even tried.
                 self._stop(row.message)
@@ -222,6 +225,11 @@ class BookingRun:
         """A Kostenposition exists in Salesforce that no Eintrag knows about."""
         return bool(self._unsaved)
 
+    @property
+    def unsaved_numbers(self) -> list[str]:
+        """The Nummern of those Kostenpositionen, to find them in Salesforce."""
+        return [exc.cost_item.number for exc in self._unsaved.values() if exc.cost_item.number]
+
     def stop(self) -> None:
         """Abbrechen: the row on its way is still finished and saved, the rest is not sent."""
         if self.is_running:
@@ -242,7 +250,7 @@ def submit(client, prepared: booking.PreparedBooking):
         return exc
 
 
-_CONCERNS_EVERY_ROW = (SalesforceAuthError, SalesforceNetworkError)
+_CONCERNS_EVERY_ROW = (SalesforceAuthError, SalesforceNetworkError, CostItemOutcomeUnknownError)
 
 
 def _error_text(outcome) -> str:

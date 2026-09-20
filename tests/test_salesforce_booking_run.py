@@ -387,3 +387,30 @@ def test_progress_counts_the_rows_of_the_current_run(conn):
     seen.append(run.progress)
 
     assert seen == [(0, 0), (0, 2), (1, 2), (2, 2)]
+
+
+# ---------- Antwort auf das Anlegen geht verloren ----------
+
+@pytest.mark.parametrize(
+    "lost_answer",
+    [TimeoutError("timed out"), urllib.error.URLError(TimeoutError("timed out")), ConnectionResetError("reset")],
+    ids=["timeout", "urlerror-timeout", "reset"],
+)
+def test_a_row_whose_answer_got_lost_is_never_sent_again(conn, lost_answer):
+    rollout, _support = _projects(conn)
+    first, second = (_entry(conn, rollout, day=day) for day in (5, 6))
+    run = _checked_run(conn, [first, second])
+    transport = _FakeTransport(_token(), lost_answer)
+
+    run.book(_client(transport), _confirm(run))
+
+    assert [row.state for row in run.rows] == [run_service.UNKNOWN, run_service.NOT_RUN]
+    assert "in Salesforce prüfen" in run.rows[0].message
+    assert not run.rows[0].is_open
+    assert not repo.get_log(conn, first).is_booked
+
+    again = _FakeTransport(_token(), _created(2), _number(2))
+    run.book(_client(again), _confirm(run))
+
+    assert [c["DeliveryDate__c"] for c in _creates(again)] == ["2026-05-06"]   # only the second row
+    assert run.rows[0].state == run_service.UNKNOWN

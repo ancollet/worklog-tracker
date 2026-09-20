@@ -137,9 +137,12 @@ def connect_customer(conn: sqlite3.Connection, customer_id: int, account: Salesf
     existing = registered_customer(conn, account.id)
     if existing is not None and existing.id != customer.id:
         raise AccountAlreadyRegisteredError(existing)
-    repo.set_customer_salesforce_account(
-        conn, customer.id, account_id=account.id, account_name=account.name
-    )
+    try:
+        repo.set_customer_salesforce_account(
+            conn, customer.id, account_id=account.id, account_name=account.name
+        )
+    except repo.BookingSystemLockedError as exc:
+        raise RegistrationError(str(exc)) from exc
     return repo.get_customer(conn, customer.id)
 
 

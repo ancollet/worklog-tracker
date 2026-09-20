@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 from worklog import repository as repo
 from worklog.models import LogEntry
 from worklog.paths import icon_path
-from worklog.services.timer import AlreadyRunningError, TimerService
+from worklog.services.timer import AlreadyRunningError, ProjectArchivedError, TimerService
 from worklog.ui.quick_add import QuickAddPopup
 
 
@@ -22,18 +22,18 @@ def _build_icon(running: bool) -> QIcon:
     themed = QIcon.fromTheme(name)
     if not themed.isNull():
         return themed
-    # Fallback chain: load packaged SVG, then overlay status badge.
-    try:
-        return QIcon(str(icon_path()))
-    except Exception:
-        pass
-    pix = QPixmap(64, 64)
-    pix.fill(QColor(0, 0, 0, 0))
+    # Fallback chain: packaged SVG (or a plain disc), with a status badge painted on top —
+    # without the theme icons installed this badge is the only sign that something is running.
+    pix = QIcon(str(icon_path())).pixmap(64, 64)
+    if pix.isNull():
+        pix = QPixmap(64, 64)
+        pix.fill(QColor(0, 0, 0, 0))
     painter = QPainter(pix)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setBrush(QColor("#4338CA"))
-    painter.setPen(QColor("#1F2937"))
-    painter.drawEllipse(6, 6, 52, 52)
+    if pix.toImage().pixelColor(32, 32).alpha() == 0:
+        painter.setBrush(QColor("#4338CA"))
+        painter.setPen(QColor("#1F2937"))
+        painter.drawEllipse(6, 6, 52, 52)
     dot_color = QColor("#10B981") if running else QColor("#9CA3AF")
     painter.setBrush(dot_color)
     painter.setPen(QColor("#FFFFFF"))
@@ -177,6 +177,9 @@ class TrayController:
             self.timer.start_entry(project_id=project_id, task=task, description=description)
         except AlreadyRunningError:
             self.tray.showMessage("Worklog", "Dieser Eintrag läuft bereits.")
+            return
+        except ProjectArchivedError:
+            self.tray.showMessage("Worklog", "Projekt ist archiviert.")
             return
         self._after_change()
 

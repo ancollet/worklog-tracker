@@ -442,6 +442,10 @@ class CustomersView(QWidget):
         except sqlite3.IntegrityError:
             QMessageBox.warning(self, "Fehler", "Kundenname existiert bereits.")
             return
+        except repo.BookingSystemLockedError as exc:
+            QMessageBox.warning(self, "Buchungssystem", f"{exc}")
+            self.refresh()
+            return
         self.refresh()
         self.changed.emit()
 
@@ -525,7 +529,11 @@ class CustomersView(QWidget):
                 f"Abgleich mit Salesforce nicht möglich – {result}" + self._last_known_text()
             )
             return
-        recorded = reconciliation.record_open_projects_check(self.conn, result)
+        try:
+            recorded = reconciliation.record_open_projects_check(self.conn, result)
+        except sqlite3.Error as exc:
+            self._set_reconciliation_hint(f"Abgleich konnte nicht gespeichert werden – {exc}")
+            return
         closed = len(recorded.closed)
         self._set_reconciliation_hint(
             f"Letzter Abgleich mit Salesforce: {reconciliation.checked_at_text(recorded.at)}"

@@ -45,3 +45,9 @@ def test_prefix_with_unknown_part_is_free_text():
 
 def test_second_snippet_on_prefix_only_description():
     assert apply_snippet("Codereview: ", "Recherche", KNOWN) == "Codereview, Recherche: "
+
+
+def test_prefix_only_description_survives_being_saved_trimmed():
+    # "Codereview: " is stored as "Codereview:" — still a prefix, not free text.
+    assert apply_snippet("Codereview:", "Recherche", KNOWN) == "Codereview, Recherche: "
+    assert apply_snippet("Codereview:", "codereview", KNOWN) == "Codereview:"

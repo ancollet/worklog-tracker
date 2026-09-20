@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from worklog import repository as repo
-from worklog.services.timer import AlreadyRunningError, TimerService
+from worklog.services.timer import AlreadyRunningError, ProjectArchivedError, TimerService
 from worklog.ui.completers import (
     make_description_completer,
     make_task_completer,
@@ -154,6 +154,10 @@ class QuickAddPopup(QDialog):
         except AlreadyRunningError:
             # Popup bleibt offen, damit Task/Beschreibung angepasst werden können.
             self.hint_label.setText("Dieser Eintrag läuft bereits.")
+            self.hint_label.setVisible(True)
+            return
+        except ProjectArchivedError:   # archived while the popup was open
+            self.hint_label.setText("Projekt ist archiviert.")
             self.hint_label.setVisible(True)
             return
         self.accept()

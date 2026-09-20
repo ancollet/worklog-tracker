@@ -242,7 +242,7 @@ class SalesforceBookingDialog(QDialog):
                 self._set_row_status(row, f"Nicht buchbar: {entry.message}", "blocked")
             elif entry.state == booking_run.BOOKED:
                 self._set_row_status(row, f"✓ gebucht als {entry.message}" if entry.message else "✓ gebucht", "ok")
-            elif entry.state in (booking_run.FAILED, booking_run.UNSAVED):
+            elif entry.state in (booking_run.FAILED, booking_run.UNSAVED, booking_run.UNKNOWN):
                 self._set_row_status(row, entry.message, "error")
             elif entry.state == booking_run.NOT_RUN:
                 self._set_row_status(row, entry.message, "blocked")
@@ -358,7 +358,9 @@ class SalesforceBookingDialog(QDialog):
         self._refresh()
         left = [
             row for row in self._rows
-            if row.entry.state in (booking_run.FAILED, booking_run.NOT_RUN, booking_run.UNSAVED)
+            if row.entry.state in (
+                booking_run.FAILED, booking_run.NOT_RUN, booking_run.UNSAVED, booking_run.UNKNOWN
+            )
         ]
         booked = len(self.booked_log_ids)
         if self._run.aborted_reason is not None:
@@ -393,11 +395,13 @@ class SalesforceBookingDialog(QDialog):
             self._set_status("Wird abgebrochen — die laufende Buchung wird noch abgeschlossen.")
             return
         if self._run.has_unsaved:
+            numbers = ", ".join(self._run.unsaved_numbers)
             confirm = QMessageBox.warning(
                 self, "Buchung nicht gespeichert",
                 "Mindestens eine Kostenposition wurde in Salesforce angelegt, steht aber nicht am Eintrag. "
                 "Wird der Dialog geschlossen, muss sie in Salesforce von Hand gelöscht werden.\n\n"
-                "Trotzdem schließen?",
+                + (f"Betroffen: {numbers}\n\n" if numbers else "")
+                + "Trotzdem schließen?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )

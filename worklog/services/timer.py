@@ -25,7 +25,7 @@ class AlreadyRunningError(Exception):
 
 
 class ProjectArchivedError(Exception):
-    """Fortsetzen abgelehnt: das Projekt des Eintrags ist archiviert."""
+    """Starten oder Fortsetzen abgelehnt: das Projekt (oder dessen Kunde) ist archiviert."""
 
     def __init__(self) -> None:
         super().__init__("Projekt ist archiviert")
@@ -61,8 +61,13 @@ class TimerService:
         """Startet einen neuen laufenden Eintrag; stoppt nie einen anderen.
 
         Wirft AlreadyRunningError, wenn ein laufender Eintrag mit identischem
-        Projekt, Task und identischer Beschreibung existiert.
+        Projekt, Task und identischer Beschreibung existiert, und
+        ProjectArchivedError, wenn das Projekt (oder dessen Kunde) archiviert ist.
         """
+        project = repo.get_project(self.conn, project_id)
+        customer = repo.get_customer(self.conn, project.customer_id) if project else None
+        if project is None or project.archived or (customer is not None and customer.archived):
+            raise ProjectArchivedError()
         with transaction(self.conn):
             for running in self.running_entries():
                 if (
@@ -102,11 +107,6 @@ class TimerService:
             raise LookupError(f"Eintrag {log_id} existiert nicht")
         if source.ended_at is None:
             raise SourceEntryRunningError()
-        project = repo.get_project(self.conn, source.project_id)
-        assert project is not None
-        customer = repo.get_customer(self.conn, project.customer_id)
-        if project.archived or (customer is not None and customer.archived):
-            raise ProjectArchivedError()
         return self.start_entry(
             project_id=source.project_id, task=source.task, description=source.description
         )

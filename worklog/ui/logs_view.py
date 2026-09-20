@@ -19,7 +19,6 @@ from worklog import repository as repo
 from worklog.services.booking import booked_cell_text, booked_cell_tooltip
 from worklog.services.entry_menu import plan_entry_menu, target_log_ids
 from worklog.services.rounding import format_hm_short
-from worklog.services.timer import TimerService
 from worklog.ui.entry_context_menu import (
     build_entry_context_menu,
     continue_entry,
@@ -31,10 +30,9 @@ from worklog.ui.entry_context_menu import (
 class LogsView(QWidget):
     changed = pyqtSignal()
 
-    def __init__(self, conn: sqlite3.Connection, timer: TimerService, parent=None) -> None:
+    def __init__(self, conn: sqlite3.Connection, parent=None) -> None:
         super().__init__(parent)
         self.conn = conn
-        self.timer = timer
 
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(

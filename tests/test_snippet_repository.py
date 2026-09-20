@@ -126,3 +126,13 @@ def test_rename_and_delete_leave_existing_descriptions_untouched(conn):
 
     assert repo.get_log(conn, first).description == "Codereview: Login-Formular"
     assert repo.get_log(conn, second).description == "Recherche: Login-Formular"
+
+
+@pytest.mark.parametrize("text", ["A, B", "Foo: Bar", "Foo:"])
+def test_snippet_text_must_not_contain_the_prefix_separators(conn, text):
+    # "," separates snippets in a prefix and ":" ends it — such a snippet could never be recognised again.
+    with pytest.raises(repo.SnippetTextError):
+        repo.create_snippet(conn, text=text)
+    snippet = repo.create_snippet(conn, text="Doku")
+    with pytest.raises(repo.SnippetTextError):
+        repo.rename_snippet(conn, snippet.id, text=text)
