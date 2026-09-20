@@ -245,6 +245,7 @@ class RecentTree(QTreeWidget):
             self, self.conn, logs,
             on_edit=self.edit_requested.emit,
             on_changed=self.changed.emit,
+            move_anchor_id=int(clicked_id),
         )
         menu.exec(self.viewport().mapToGlobal(pos))
         menu.deleteLater()
