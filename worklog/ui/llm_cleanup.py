@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from worklog.services.llm_cleanup import LlmCleanupError
+from worklog.services.llm_cleanup import LlmCleanupError, is_already_clean
 from worklog.services.llm_settings import LlmConfiguration, load_configuration
 
 DescriptionField = Union[QLineEdit, QPlainTextEdit, QTextEdit]
@@ -93,10 +93,6 @@ class CleanupPreviewDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
-
-
-def is_already_clean(before: str, after: str) -> bool:
-    return before.strip() == after.strip()
 
 
 class CleanupButton(QToolButton):
