@@ -61,6 +61,8 @@ class LogDialog(QDialog):
         # Original time-of-day of the edited entry; reused by the "Datum + Dauer"
         # mode on save so editing the duration doesn't move the entry to now.
         self._loaded_start_time = None
+        # True while editing a laufender Eintrag: saving must not stop it.
+        self._running = False
         self.setWindowTitle("Log bearbeiten" if log_id else "Add Log")
         self.setMinimumWidth(440)
 
@@ -147,6 +149,10 @@ class LogDialog(QDialog):
         mode_row.addStretch(1)
         outer.addLayout(mode_row)
         outer.addWidget(self.stack)
+        self.running_hint = QLabel("Läuft gerade · Ende und Dauer entstehen erst beim Stoppen.")
+        self.running_hint.setStyleSheet("color: #6B7280;")
+        self.running_hint.setVisible(False)
+        outer.addWidget(self.running_hint)
 
         common = QFormLayout()
         common.addRow("Projekt:", self.project_combo)
@@ -230,7 +236,15 @@ class LogDialog(QDialog):
             self.end_edit.setDateTime(QDateTime(log.ended_at.replace(tzinfo=None)))
             self.mode_se.setChecked(True)
         else:
-            self.mode_dur.setChecked(True)
+            # Laufender Eintrag: nur der Start ist editierbar, kein Ende, keine Dauer.
+            self._running = True
+            self.mode_se.setChecked(True)
+            self.mode_se.setEnabled(False)
+            self.mode_dur.setEnabled(False)
+            self.end_edit.setEnabled(False)
+            self.round_combo.setEnabled(False)
+            self.round_preview.setVisible(False)
+            self.running_hint.setVisible(True)
         idx = self.round_combo.findData(log.rounded_to_minutes)
         self.round_combo.setCurrentIndex(idx if idx >= 0 else 0)
 
@@ -242,6 +256,14 @@ class LogDialog(QDialog):
         task = self.task_input.text().strip() or None
         description = self.desc_input.toPlainText().strip() or None
         round_minutes = self._effective_round_minutes()
+
+        if self._running:
+            log = repo.get_log(self.conn, self.log_id)
+            # if it was stopped meanwhile (e.g. via tray), the normal path applies
+            if log is not None and log.ended_at is None:
+                if self._save_running(log, pid, task, description):
+                    self.accept()
+                return
 
         if self.mode_se.isChecked():
             start_dt = self.start_edit.dateTime().toPyDateTime().astimezone()
@@ -277,6 +299,25 @@ class LogDialog(QDialog):
             )
 
         self.accept()
+
+    def _save_running(
+        self, log, project_id: int, task: Optional[str], description: Optional[str]
+    ) -> bool:
+        """Save a laufender Eintrag without giving it an end or a duration."""
+        start_dt = self.start_edit.dateTime().toPyDateTime().astimezone()
+        # the editor has minute precision; keep the stored start unless it was changed
+        if start_dt == log.started_at.replace(second=0, microsecond=0):
+            start_dt = log.started_at
+        if start_dt > datetime.now().astimezone():
+            QMessageBox.warning(self, "Fehler", "Start darf nicht in der Zukunft liegen.")
+            return False
+        repo.update_log(
+            self.conn, self.log_id,
+            project_id=project_id, task=task, description=description,
+            started_at=start_dt.isoformat(timespec="seconds"),
+            ended_at=None, duration_seconds=None, rounded_to_minutes=None,
+        )
+        return True
 
     def _persist(
         self,
