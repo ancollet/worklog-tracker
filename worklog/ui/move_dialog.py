@@ -58,19 +58,23 @@ def move_entries(
         return False
     try:
         move_entries_to_date(conn, log_ids, dlg.selected_date())
-    except repo.EntryBookedError as exc:
-        QMessageBox.warning(
-            parent, "Verschieben nicht möglich", f"{exc}.\n\nEs wurde nichts verschoben."
-        )
-        return False
-    except MoveRejectedError as exc:
+    except MOVE_REJECTIONS as exc:
         show_move_rejected(parent, exc)
         return False
     return True
 
 
-def show_move_rejected(parent: QWidget, exc: MoveRejectedError) -> None:
+# Everything `move_entries_to_date` raises when it moves nothing.
+MOVE_REJECTIONS = (MoveRejectedError, repo.EntryBookedError)
+
+
+def show_move_rejected(parent: QWidget, exc: Exception) -> None:
     """Tell why nothing was moved (shared by "Verschieben auf…" and Drag & Drop)."""
+    if isinstance(exc, repo.EntryBookedError):
+        QMessageBox.warning(
+            parent, "Verschieben nicht möglich", f"{exc}.\n\nEs wurde nichts verschoben."
+        )
+        return
     entry = exc.entry
     what = " · ".join(
         part for part in (entry.started_at.strftime("%d.%m.%Y %H:%M"), entry.task, entry.description)

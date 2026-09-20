@@ -28,7 +28,6 @@ from worklog import repository as repo
 from worklog.models import LogEntry
 from worklog.services.entry_menu import target_log_ids
 from worklog.services.move import (
-    MoveRejectedError,
     drop_changes_anything,
     drop_target_day,
     move_entries_to_date,
@@ -42,7 +41,7 @@ from worklog.ui.completers import (
     refresh_task_completer,
 )
 from worklog.ui.entry_context_menu import build_entry_context_menu, keep_selection_on_right_click
-from worklog.ui.move_dialog import show_move_rejected
+from worklog.ui.move_dialog import MOVE_REJECTIONS, show_move_rejected
 from worklog.ui.snippet_button import with_snippet_button
 
 CLOCKWORK_URL = (
@@ -356,7 +355,7 @@ class RecentTree(QTreeWidget):
     def _move_dropped(self, log_ids: list[int], target: date) -> None:
         try:
             move_entries_to_date(self.conn, log_ids, target)
-        except MoveRejectedError as exc:
+        except MOVE_REJECTIONS as exc:
             show_move_rejected(self, exc)
             return
         self.changed.emit()
