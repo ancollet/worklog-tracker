@@ -120,6 +120,16 @@ def _open_project_condition() -> str:
     return f"{PROJECT_STATUS_FIELD} IN ({values})"
 
 
+# IDs per query of open_projects_among: about 28 URL characters each, far below Salesforce's
+# limit of 16,384 bytes for the URL of a GET.
+_OPEN_CHECK_BLOCK_SIZE = 200
+
+
+def _is_salesforce_id(text: str) -> bool:
+    """Salesforce IDs are 15 or 18 ASCII letters and digits."""
+    return len(text) in (15, 18) and text.isascii() and text.isalnum()
+
+
 def _error_body(exc: urllib.error.HTTPError):
     try:
         return json.loads(exc.read().decode("utf-8", errors="replace"))
@@ -211,6 +221,31 @@ class SalesforceClient:
             SalesforceProject(id=str(r["Id"]), name=str(r.get(PROJECT_NAME_FIELD) or ""))
             for r in records
         ]
+
+    # ---- Abgleich / Prüfung vor dem Buchen: welche Salesforce-Projekte sind noch offen? ----
+
+    def open_projects_among(self, project_ids: list[str]) -> set[str]:
+        """Those of the given Salesforce-Projekte that are still offen — in the caller's spelling.
+
+        Everything else counts as geschlossen: closed Projekte, deleted ones, and
+        references that are no Salesforce ID at all.
+        """
+        asked = [str(project_id).strip() for project_id in project_ids]
+        # One malformed ID makes Salesforce refuse the whole query, so only real IDs are asked for.
+        # IDs exist in a 15- and an 18-character form; the first 15 identify the record.
+        ids = list({project_id[:15]: project_id for project_id in asked if _is_salesforce_id(project_id)}.values())
+        open_keys: set[str] = set()
+        # The query travels in the URL of a GET, so many IDs are asked for block by block.
+        # Any error fails the whole check — a Projekt is never reported as geschlossen by accident.
+        for start in range(0, len(ids), _OPEN_CHECK_BLOCK_SIZE):
+            id_list = ", ".join(f"'{_escape_soql(i)}'" for i in ids[start:start + _OPEN_CHECK_BLOCK_SIZE])
+            records = self._query(
+                f"SELECT Id FROM {PROJECT_OBJECT} WHERE Id IN ({id_list}) AND {_open_project_condition()}"
+            )
+            open_keys.update(str(r.get("Id") or "")[:15] for r in records)
+        return {i for i in asked if _is_salesforce_id(i) and i[:15] in open_keys}
+
+    # ---- Ende Abgleich-Block ----
 
     def _query(self, soql: str) -> list[dict]:
         """Run one SOQL query (GET .../query?q=...) and return all its records.

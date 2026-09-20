@@ -510,3 +510,117 @@ def test_org_error_while_listing_projects_carries_the_salesforce_text():
         sf.SalesforceClient(_creds(), opener=transport).list_open_projects("001AA000001AAAAIA2")
 
     assert "No such column" in str(excinfo.value)
+
+
+# ---------- Welche Salesforce-Projekte sind noch offen? (Abgleich, Prüfung vor dem Buchen) ----------
+
+_RELAUNCH_ID = "a0XAA000001AAAAIA2"
+_WARTUNG_ID = "a0XAA000001BBBBIA2"
+_GELOESCHT_ID = "a0XAA000001CCCCIA2"
+
+
+def test_open_projects_among_returns_those_that_are_still_open():
+    # Salesforce answers only with the offenen ones: closed and deleted Projekte are simply missing
+    transport = _FakeTransport(_token(), _query_result({"Id": _RELAUNCH_ID}))
+
+    still_open = sf.SalesforceClient(_creds(), opener=transport).open_projects_among(
+        [_RELAUNCH_ID, _WARTUNG_ID, _GELOESCHT_ID]
+    )
+
+    assert still_open == {_RELAUNCH_ID}
+
+
+def test_open_projects_among_asks_for_exactly_these_projects_and_only_the_open_ones():
+    transport = _FakeTransport(_token(), _query_result())
+
+    sf.SalesforceClient(_creds(), opener=transport).open_projects_among([f" {_RELAUNCH_ID} ", _WARTUNG_ID])
+
+    assert _soql(transport.requests[1]) == (
+        f"SELECT Id FROM {sf.PROJECT_OBJECT} "
+        f"WHERE Id IN ('{_RELAUNCH_ID}', '{_WARTUNG_ID}') "
+        f"AND {sf.PROJECT_STATUS_FIELD} IN ('{sf.PROJECT_OPEN_STATUSES[0]}')"
+    )
+
+
+def test_a_15_character_id_is_recognised_in_the_18_character_answer():
+    # hand-typed references may be the 15-character form; Salesforce always answers with 18
+    transport = _FakeTransport(_token(), _query_result({"Id": _RELAUNCH_ID}))
+
+    still_open = sf.SalesforceClient(_creds(), opener=transport).open_projects_among(
+        [_RELAUNCH_ID[:15], _WARTUNG_ID[:15]]
+    )
+
+    assert still_open == {_RELAUNCH_ID[:15]}
+
+
+def test_references_that_are_no_salesforce_id_count_as_closed_and_never_reach_the_query():
+    # typed by hand before Registrieren existed; one malformed ID would make Salesforce refuse the whole query
+    transport = _FakeTransport(_token(), _query_result({"Id": _RELAUNCH_ID}))
+
+    still_open = sf.SalesforceClient(_creds(), opener=transport).open_projects_among(
+        ["Relaunch 2024", "x') OR Name != ('", _RELAUNCH_ID, ""]
+    )
+
+    assert still_open == {_RELAUNCH_ID}
+    assert _soql(transport.requests[1]).count("'") == 4   # the one ID and the one open status
+
+
+def test_nothing_to_check_returns_nothing_without_asking_salesforce():
+    transport = _FakeTransport()
+    client = sf.SalesforceClient(_creds(), opener=transport)
+
+    assert client.open_projects_among([]) == set()
+    assert client.open_projects_among(["kein-salesforce-projekt"]) == set()
+    assert transport.requests == []
+
+
+def _many_project_ids(count: int) -> list[str]:
+    return [f"a0XAA{number:010d}IA2" for number in range(count)]
+
+
+def test_many_projects_are_asked_for_in_blocks_that_fit_into_a_request():
+    # the query travels in the URL of a GET; Salesforce refuses URLs beyond 16,384 bytes
+    ids = _many_project_ids(450)
+    first, last = ids[0], ids[-1]
+    transport = _FakeTransport(
+        _token(), _query_result({"Id": first}), _query_result(), _query_result({"Id": last}),
+    )
+
+    still_open = sf.SalesforceClient(_creds(), opener=transport).open_projects_among(ids)
+
+    assert still_open == {first, last}
+    queries = transport.requests[1:]
+    assert len(queries) == 3
+    assert all(len(req.full_url) < 8000 for req in queries)
+    asked = [i for req in queries for i in ids if f"'{i}'" in _soql(req)]
+    assert sorted(asked) == ids   # every Projekt exactly once
+
+
+def test_the_same_project_in_both_id_forms_is_asked_for_once():
+    transport = _FakeTransport(_token(), _query_result({"Id": _RELAUNCH_ID}))
+
+    still_open = sf.SalesforceClient(_creds(), opener=transport).open_projects_among(
+        [_RELAUNCH_ID, _RELAUNCH_ID[:15], _RELAUNCH_ID]
+    )
+
+    assert still_open == {_RELAUNCH_ID, _RELAUNCH_ID[:15]}
+    assert _soql(transport.requests[1]).count("a0XAA000001AAAA") == 1
+
+
+def test_network_error_while_checking_open_projects_raises_network_error():
+    transport = _FakeTransport(_token(), urllib.error.URLError("Network is unreachable"))
+
+    with pytest.raises(sf.SalesforceNetworkError):
+        sf.SalesforceClient(_creds(), opener=transport).open_projects_among([_RELAUNCH_ID])
+
+
+def test_an_error_in_a_later_block_fails_the_whole_check_instead_of_reporting_projects_as_closed():
+    ids = _many_project_ids(450)
+    transport = _FakeTransport(_token(), _query_result({"Id": ids[0]}), _http_error(500, [
+        {"message": "Server busy", "errorCode": "SERVER_UNAVAILABLE"},
+    ]))
+
+    with pytest.raises(sf.SalesforceOrgError) as excinfo:
+        sf.SalesforceClient(_creds(), opener=transport).open_projects_among(ids)
+
+    assert "Server busy" in str(excinfo.value)

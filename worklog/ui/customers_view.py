@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
@@ -24,8 +25,10 @@ from PyQt6.QtWidgets import (
 
 from worklog import repository as repo
 from worklog.services import salesforce as sf_client
+from worklog.services import salesforce_reconciliation as reconciliation
 from worklog.services import salesforce_registration as registration
 from worklog.services.salesforce_settings import SERVICE_TYPES, SalesforceConfiguration, load_configuration
+from worklog.ui.salesforce_call import start_salesforce_call
 
 ROUNDING_CHOICES = [
     ("Default", None),
@@ -63,6 +66,12 @@ class CustomersView(QWidget):
         self.show_archived = QCheckBox("Archivierte anzeigen")
         self.show_archived.toggled.connect(self.refresh)
 
+        # Abgleich geschlossener Projekte: never a dialog, only this line under the tree.
+        self.sf_reconciliation_hint = QLabel("")
+        self.sf_reconciliation_hint.setStyleSheet("color: gray; font-size: 11px;")
+        self.sf_reconciliation_hint.setWordWrap(True)
+        self.sf_reconciliation_hint.setVisible(False)
+
         self.add_customer_btn = QPushButton("+ Kunde")
         self.add_customer_btn.clicked.connect(self.add_customer)
         self.add_project_btn = QPushButton("+ Projekt")
@@ -89,6 +98,7 @@ class CustomersView(QWidget):
         left = QVBoxLayout()
         left.addWidget(self.show_archived)
         left.addWidget(self.tree, 1)
+        left.addWidget(self.sf_reconciliation_hint)
         btn_row = QHBoxLayout()
         btn_row.addWidget(self.add_customer_btn)
         btn_row.addWidget(self.add_project_btn)
@@ -105,6 +115,8 @@ class CustomersView(QWidget):
         self._current_project_id: int | None = None
         self._color_value: str | None = None
         self._sf_missing_text = ""   # why Salesforce is unavailable; empty when the connection is complete
+        self._sf_reconciliation = None            # the Abgleich running in the background, if any
+        self._sf_last_reconciliation_attempt: datetime | None = None
 
         self.refresh()
 
@@ -229,11 +241,12 @@ class CustomersView(QWidget):
                 if p.round_minutes is not None:
                     round_label = f"{p.round_minutes} min" if p.round_minutes else "Aus"
                 pitem = QTreeWidgetItem([
-                    p.name + (" (archiviert)" if p.archived else ""),
+                    _project_item_text(p),
                     round_label,
                     registration.project_reference_text(p),   # never a Salesforce ID
                 ])
                 pitem.setData(0, Qt.ItemDataRole.UserRole, ("project", p.id))
+                _apply_closed_tooltip(pitem, p)
                 if p.color:
                     pitem.setForeground(0, QColor(p.color))
                 citem.addChild(pitem)
@@ -347,7 +360,7 @@ class CustomersView(QWidget):
         sf_project_text = (
             registration.project_reference_text(proj) if proj.customer_booking_system == "salesforce" else ""
         )
-        self.proj_sf_name.setText(sf_project_text or "(nicht verbunden)")
+        self._show_salesforce_project_of(proj)
         self.proj_sf_btn.setText("Ändern…" if sf_project_text else "Verbinden…")
         self.proj_service_type.setCurrentText(registration.service_type_of(self.conn, proj))
         self.proj_request_type.setText(proj.customer_request_type or "")
@@ -471,7 +484,91 @@ class CustomersView(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        self._update_salesforce_availability()
+        config = self._update_salesforce_availability()
+        self._reconcile_if_due(config)
+
+    # ------------------ Salesforce: Abgleich geschlossener Projekte ------------------
+
+    def _reconcile_if_due(self, config: SalesforceConfiguration) -> None:
+        """Opening the Kunden-Tab checks the registrierte Projekte against Salesforce — in the
+        background, not more often than necessary, and without ever opening a dialog."""
+        if self._sf_reconciliation is not None:
+            return
+        asked = reconciliation.salesforce_project_ids(self.conn)
+        if not asked:   # nothing registriert: Salesforce is none of this user's business
+            self._set_reconciliation_hint("")
+            return
+        if not config.is_connection_complete or config.credentials is None:
+            self._set_reconciliation_hint(
+                "Kein Abgleich mit Salesforce – " + config.connection_missing_text + self._last_known_text()
+            )
+            return
+        now = datetime.now(timezone.utc)
+        if not reconciliation.is_reconciliation_due(self._sf_last_reconciliation_attempt, now):
+            return
+        self._sf_last_reconciliation_attempt = now
+        self._set_reconciliation_hint("Abgleich mit Salesforce läuft…")
+        # Only the IDs travel to the background thread; the database stays in the UI thread.
+        self._sf_reconciliation = start_salesforce_call(
+            config.credentials,
+            self._sf_client_factory,
+            lambda client: reconciliation.check_open_projects(client, asked),
+            self._on_reconciliation_finished,
+        )
+
+    def _on_reconciliation_finished(self, ok: bool, result) -> None:
+        if self.sender() is not self._sf_reconciliation:
+            return
+        self._sf_reconciliation = None
+        if not ok:   # the last known state stays as it is
+            self._set_reconciliation_hint(
+                f"Abgleich mit Salesforce nicht möglich – {result}" + self._last_known_text()
+            )
+            return
+        recorded = reconciliation.record_open_projects_check(self.conn, result)
+        closed = len(recorded.closed)
+        self._set_reconciliation_hint(
+            f"Letzter Abgleich mit Salesforce: {reconciliation.checked_at_text(recorded.at)}"
+            + (f" – {closed} Projekt{'e' if closed != 1 else ''} in Salesforce geschlossen." if closed else "")
+        )
+        self._update_closed_markers()
+
+    def _last_known_text(self) -> str:
+        checked = [p.salesforce_checked_at for p in repo.list_projects(self.conn, include_archived=True)
+                   if p.salesforce_checked_at and p.customer_booking_system == "salesforce" and p.external_ref]
+        if not checked:
+            return ""
+        return f" Angezeigt wird der Stand vom {reconciliation.checked_at_text(max(checked))}."
+
+    def _set_reconciliation_hint(self, text: str) -> None:
+        self.sf_reconciliation_hint.setText(text)
+        self.sf_reconciliation_hint.setVisible(bool(text))
+
+    def _update_closed_markers(self) -> None:
+        """Show what the Abgleich recorded without rebuilding the tree — selection and
+        half-edited details stay as they are."""
+        for i in range(self.tree.topLevelItemCount()):
+            citem = self.tree.topLevelItem(i)
+            for j in range(citem.childCount()):
+                pitem = citem.child(j)
+                project = repo.get_project(self.conn, pitem.data(0, Qt.ItemDataRole.UserRole)[1])
+                if project is not None:
+                    pitem.setText(0, _project_item_text(project))
+                    _apply_closed_tooltip(pitem, project)
+        if self._current_project_id is not None:
+            project = repo.get_project(self.conn, self._current_project_id)
+            if project is not None:
+                self._show_salesforce_project_of(project)
+
+    def _show_salesforce_project_of(self, project) -> None:
+        """The connected Salesforce-Projekt by name, marked if it is geschlossen — never its ID."""
+        text = (
+            registration.project_reference_text(project)
+            if project.customer_booking_system == "salesforce" else ""
+        )
+        marker = reconciliation.closed_marker(project)
+        self.proj_sf_name.setText((text or "(nicht verbunden)") + (f" – {marker}" if marker else ""))
+        self.proj_sf_name.setToolTip(reconciliation.closed_tooltip(project))
 
     def _update_salesforce_availability(self) -> SalesforceConfiguration:
         """Without a complete connection Registrieren and Verbinden are disabled and say what is missing."""
@@ -612,6 +709,20 @@ class CustomersView(QWidget):
             proj = repo.get_project(self.conn, oid)
             return proj.customer_id if proj else None
         return None
+
+
+def _project_item_text(project) -> str:
+    marker = reconciliation.closed_marker(project)
+    return project.name + (" (archiviert)" if project.archived else "") + (f" – {marker}" if marker else "")
+
+
+def _apply_closed_tooltip(item: QTreeWidgetItem, project) -> None:
+    tooltip = reconciliation.closed_tooltip(project)
+    for column in range(item.columnCount()):
+        item.setToolTip(column, tooltip)
+    font = item.font(0)
+    font.setItalic(bool(tooltip))
+    item.setFont(0, font)
 
 
 def _booking_system_label(value: str | None) -> str:
