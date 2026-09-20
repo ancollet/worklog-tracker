@@ -24,25 +24,13 @@ class EntryRunningError(MoveRejectedError):
         super().__init__(entry, "Ein laufender Eintrag kann nicht verschoben werden.")
 
 
-class EntryBookedError(MoveRejectedError):
-    """A gebuchter Eintrag is locked until its Buchung is storniert."""
-
-    def __init__(self, entry: LogEntry) -> None:
-        super().__init__(
-            entry,
-            "Ein gebuchter Eintrag kann nicht verschoben werden. "
-            "Storniere zuerst die Buchung.",
-        )
-
-
-def _check_movable(log: LogEntry) -> None:
-    """The one place for reasons that block moving an entry."""
-    if log.ended_at is None:
-        raise EntryRunningError(log)
-    # Booking reference today; swap for the central "Eintrag ist gebucht" check
-    # once the Salesforce spec brings it.
-    if log.external_worklog_id:
-        raise EntryBookedError(log)
+def _check_movable(conn: sqlite3.Connection, logs: list[LogEntry]) -> None:
+    """The one place for reasons that block moving entries."""
+    for log in logs:
+        if log.ended_at is None:
+            raise EntryRunningError(log)
+    # Sperr-Regel: raises `repo.EntryBookedError` when an entry is gebucht.
+    repo.ensure_not_booked(conn, [int(log.id) for log in logs])
 
 
 def _shift_days(moment: datetime, days: int) -> datetime:
@@ -59,12 +47,12 @@ def _shift_days(moment: datetime, days: int) -> datetime:
 def move_entries_to_date(conn: sqlite3.Connection, log_ids: list[int], target: date) -> None:
     """Put every entry on `target` (the day of its start), keeping its time of day.
 
-    Atomic: raises a `MoveRejectedError` before anything is written when one of
-    the entries must not be moved. Overlaps on the target day are not checked.
+    Atomic: raises a `MoveRejectedError` (or `repo.EntryBookedError` for gebuchte
+    Einträge) before anything is written when one of the entries must not be
+    moved. Overlaps on the target day are not checked.
     """
     logs = [log for log in (repo.get_log(conn, i) for i in log_ids) if log is not None]
-    for log in logs:
-        _check_movable(log)
+    _check_movable(conn, logs)
     moves = [(log, (target - log.started_at.date()).days) for log in logs]
     moves = [(log, days) for log, days in moves if days != 0]
     if not moves:

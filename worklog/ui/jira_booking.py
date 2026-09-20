@@ -1,6 +1,7 @@
-"""Jira booking dialogs, shared by every view that offers them.
+"""Jira booking dialog, shared by every view that offers it.
 
-Both functions return True when data changed, so the caller can refresh.
+Returns True when data changed, so the caller can refresh. "Buchung stornieren"
+lives in `ui/entry_context_menu.py` (`cancel_entry_booking`).
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ def book_jira(parent: QWidget, conn: sqlite3.Connection, log_id: int) -> bool:
     log = repo.get_log(conn, log_id)
     if log is None:
         return False
-    if log.external_worklog_id:
+    if log.is_booked:
         QMessageBox.information(
             parent, "Bereits gebucht",
             f"Dieser Eintrag ist bereits gebucht (Worklog-ID {log.external_worklog_id}).",
@@ -86,16 +87,4 @@ def book_jira(parent: QWidget, conn: sqlite3.Connection, log_id: int) -> bool:
         parent, "Gebucht",
         f"Worklog {result.worklog_id} auf {result.issue_key} angelegt.",
     )
-    return True
-
-
-def clear_jira_booking(parent: QWidget, conn: sqlite3.Connection, log_id: int) -> bool:
-    confirm = QMessageBox.question(
-        parent, "Lokal entfernen?",
-        "Nur die lokale Buchungs-Referenz löschen. Der Worklog in Jira bleibt bestehen "
-        "und muss dort manuell entfernt werden. Fortfahren?",
-    )
-    if confirm != QMessageBox.StandardButton.Yes:
-        return False
-    repo.set_log_external_ref(conn, log_id, worklog_id=None, worklog_url=None, synced_at_iso=None)
     return True

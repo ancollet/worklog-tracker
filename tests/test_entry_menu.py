@@ -56,9 +56,50 @@ def test_unbooked_entry_of_jira_customer_offers_booking():
     assert plan.jira_action == "book"
 
 
-def test_booked_entry_of_jira_customer_offers_local_removal():
+def test_booked_entry_offers_buchung_stornieren_instead_of_booking():
     plan = plan_entry_menu([_entry(1, booking_system="jira", worklog_id="4711")])
-    assert plan.jira_action == "unbook"
+    assert plan.can_cancel_booking is True
+    assert plan.jira_action is None
+
+
+def test_buchung_stornieren_for_every_booked_entry_whatever_the_booking_system():
+    for system in ("jira", "salesforce", None):
+        plan = plan_entry_menu([_entry(1, booking_system=system, worklog_id="4711")])
+        assert plan.can_cancel_booking is True
+
+
+def test_buchung_stornieren_only_for_exactly_one_booked_entry():
+    assert plan_entry_menu([_entry(1, booking_system="jira")]).can_cancel_booking is False
+    booked = [_entry(1, worklog_id="1"), _entry(2, worklog_id="2")]
+    assert plan_entry_menu(booked).can_cancel_booking is False
+
+
+# ---------- Sperr-Regel: gebucht = gesperrt ----------
+
+def test_unbooked_entry_is_not_locked():
+    plan = plan_entry_menu([_entry(1)])
+    assert (plan.can_edit, plan.can_move, plan.can_delete) == (True, True, True)
+    assert plan.locked_hint is None
+
+
+def test_booked_entry_disables_edit_move_and_delete():
+    plan = plan_entry_menu([_entry(1, worklog_id="4711")])
+    assert (plan.can_edit, plan.can_move, plan.can_delete) == (False, False, False)
+    assert plan.locked_hint == "Eintrag ist gebucht, erst Buchung stornieren"
+
+
+def test_booked_entry_can_still_be_continued_and_copied():
+    plan = plan_entry_menu([_entry(1, worklog_id="4711")])
+    assert plan.can_continue is True
+    assert plan.can_copy_description is True
+
+
+def test_mixed_selection_is_locked_as_a_whole_with_the_count():
+    logs = [_entry(1), _entry(2, worklog_id="4711"), _entry(3, worklog_id="4712")]
+    plan = plan_entry_menu(logs)
+    assert (plan.can_move, plan.can_delete) == (False, False)
+    assert plan.locked_hint == "2 von 3 Einträgen sind gebucht, erst Buchung stornieren"
+    assert plan.can_copy_description is True
 
 
 def test_jira_actions_only_for_exactly_one_entry():

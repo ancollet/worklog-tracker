@@ -5,7 +5,7 @@ from datetime import date, datetime
 import pytest
 
 from worklog import repository as repo
-from worklog.services.move import EntryBookedError, EntryRunningError, MoveRejectedError, move_entries_to_date
+from worklog.services.move import EntryRunningError, MoveRejectedError, move_entries_to_date
 
 pytestmark = pytest.mark.skipif(
     not hasattr(time, "tzset"), reason="pinning the local timezone needs time.tzset"
@@ -97,11 +97,12 @@ def test_booked_entry_in_selection_moves_nothing_and_names_the_reason(conn):
     repo.set_log_external_ref(conn, booked, worklog_id="10042")
     before = _stored_times(conn)
 
-    with pytest.raises(EntryBookedError) as exc:
+    # the central Sperr-Regel rejects it, with the same error as editing and deleting
+    with pytest.raises(repo.EntryBookedError) as exc:
         move_entries_to_date(conn, [free, booked], date(2026, 6, 12))
 
-    assert isinstance(exc.value, MoveRejectedError)
-    assert exc.value.entry.id == booked
+    assert exc.value.log_ids == [booked]
+    assert exc.value.total == 2
     assert _stored_times(conn) == before
 
 

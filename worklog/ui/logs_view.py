@@ -53,7 +53,7 @@ class LogsView(QWidget):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         keep_selection_on_right_click(self.table)
-        self.table.itemSelectionChanged.connect(self._update_continue_btn)
+        self.table.itemSelectionChanged.connect(self._update_buttons)
 
         self.add_btn = QPushButton("+ Add Log")
         self.add_btn.clicked.connect(self._add_log)
@@ -81,7 +81,7 @@ class LogsView(QWidget):
         self._row_logs: list = []
 
         self.refresh()
-        self._update_continue_btn()
+        self._update_buttons()
 
     def refresh(self) -> None:
         logs = repo.list_logs(self.conn, limit=500)
@@ -103,11 +103,12 @@ class LogsView(QWidget):
                 item.setData(Qt.ItemDataRole.UserRole, log.id)
                 if col in (4, 5, 6):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                if col == 6 and log.external_worklog_id:
+                if col == 6 and log.is_booked:
                     item.setForeground(QColor("#15803d"))
                     if log.external_worklog_url:
                         item.setToolTip(log.external_worklog_url)
                 self.table.setItem(r, col, item)
+        self._update_buttons()
 
     def _selected_logs(self) -> list:
         """Selected entries in visual (top-to-bottom) order."""
@@ -145,10 +146,17 @@ class LogsView(QWidget):
             self.refresh()
             self.changed.emit()
 
-    def _update_continue_btn(self) -> None:
-        """Same enabled rule as the menu item: exactly one entry that is not running."""
+    def _update_buttons(self) -> None:
+        """Same enabled rules as the menu items, e.g. Fortsetzen: exactly one entry
+        that is not running; Bearbeiten/Löschen: no gebuchter Eintrag (Sperr-Regel)."""
         logs = self._selected_logs()
-        self.continue_btn.setEnabled(bool(logs) and plan_entry_menu(logs).can_continue)
+        plan = plan_entry_menu(logs) if logs else None
+        self.continue_btn.setEnabled(plan is not None and plan.can_continue)
+        self.edit_btn.setEnabled(plan is not None and plan.can_edit)
+        self.delete_btn.setEnabled(plan is not None and plan.can_delete)
+        hint = (plan.locked_hint if plan is not None else None) or ""
+        self.edit_btn.setToolTip(hint)
+        self.delete_btn.setToolTip(hint)
 
     def _continue_selected(self) -> None:
         """Button "Fortsetzen": same operation as the context-menu item."""
@@ -188,7 +196,7 @@ class LogsView(QWidget):
 
 
 def _booked_cell(log) -> str:
-    if log.external_worklog_id:
+    if log.is_booked:
         return f"✓ {log.external_worklog_id}"
     if log.customer_booking_system == "jira":
         return "—"

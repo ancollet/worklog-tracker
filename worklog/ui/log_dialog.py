@@ -6,6 +6,7 @@ from typing import Optional
 
 from PyQt6.QtCore import QDateTime, Qt
 from PyQt6.QtWidgets import (
+    QAbstractButton,
     QButtonGroup,
     QComboBox,
     QDateEdit,
@@ -65,6 +66,8 @@ class LogDialog(QDialog):
         self._loaded_start_time = None
         # True while editing a laufender Eintrag: saving must not stop it.
         self._running = False
+        # True while showing a gebuchter Eintrag: everything is read-only (Sperr-Regel).
+        self._booked = False
         self.setWindowTitle("Log bearbeiten" if log_id else "Add Log")
         self.setMinimumWidth(440)
 
@@ -155,6 +158,10 @@ class LogDialog(QDialog):
         self.running_hint.setStyleSheet("color: #6B7280;")
         self.running_hint.setVisible(False)
         outer.addWidget(self.running_hint)
+        self.booked_hint = QLabel("")
+        self.booked_hint.setStyleSheet("color: #B45309;")
+        self.booked_hint.setVisible(False)
+        outer.addWidget(self.booked_hint)
 
         common = QFormLayout()
         common.addRow("Projekt:", self.project_combo)
@@ -163,9 +170,8 @@ class LogDialog(QDialog):
         self.cleanup_button = CleanupButton(
             conn, self.desc_input, lambda: self.task_input.text().strip() or None
         )
-        common.addRow(
-            "Beschr.:", with_snippet_button(conn, self.desc_input, [self.cleanup_button])
-        )
+        self.desc_row = with_snippet_button(conn, self.desc_input, [self.cleanup_button])
+        common.addRow("Beschr.:", self.desc_row)
         round_row = QHBoxLayout()
         round_row.addWidget(self.round_combo)
         round_row.addWidget(self.round_preview, 1)
@@ -178,6 +184,7 @@ class LogDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
+        self.buttons = buttons
 
         self.project_combo.currentIndexChanged.connect(self._on_project_changed)
         self.task_input.editingFinished.connect(self._refresh_desc_suggestions)
@@ -260,8 +267,38 @@ class LogDialog(QDialog):
             self.running_hint.setVisible(True)
         idx = self.round_combo.findData(log.rounded_to_minutes)
         self.round_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        if log.is_booked:
+            self._set_read_only(str(repo.EntryBookedError([log_id], 1)))
+
+    def _set_read_only(self, reason: str) -> None:
+        """Gebuchter Eintrag: show it, but nothing can be changed or saved."""
+        self._booked = True
+        self.setWindowTitle("Log ansehen (gebucht)")
+        self.booked_hint.setText(f"🔒 {reason}.")
+        self.booked_hint.setVisible(True)
+        for widget in (
+            self.mode_se, self.mode_dur, self.stack, self.project_combo, self.round_combo,
+        ):
+            widget.setEnabled(False)
+        # read-only instead of disabled: the text stays selectable for copying
+        self.task_input.setReadOnly(True)
+        self.desc_input.setReadOnly(True)
+        # Snippet button and "Bereinigen"
+        for button in self.desc_row.findChildren(QAbstractButton):
+            button.setEnabled(False)
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setVisible(False)
+        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Schließen")
 
     def _save(self) -> None:
+        if self._booked:
+            return
+        try:
+            self._save_checked()
+        except repo.EntryBookedError as exc:
+            # gebucht meanwhile, e.g. from the other tab
+            QMessageBox.warning(self, "Speichern nicht möglich", f"{exc}.")
+
+    def _save_checked(self) -> None:
         pid = self._current_project_id()
         if pid is None:
             QMessageBox.warning(self, "Fehler", "Bitte ein Projekt wählen.")
