@@ -1,0 +1,20 @@
+# 04: Salesforce-Account registrieren
+
+**What to build:** Im Kunden-Tab wähle ich "Salesforce-Account registrieren…" und sehe alle Accounts unserer Org, die mindestens ein offenes Projekt haben. Ich filtere per Namenseingabe, wähle einen Account und habe danach einen Kunden mit Buchungssystem Salesforce, dessen Name und Account-ID übernommen sind. Einen Kunden, den ich früher von Hand angelegt habe, kann ich nachträglich mit seinem Account verbinden, ohne meine Einträge zu verlieren.
+
+Spec: `.scratch/salesforce-buchen/spec.md` (Stories 9–13, 20, 23). Begriff: "Registrieren" in `CONTEXT.md`.
+
+**Blocked by:** 01 (Salesforce-Verbindung)
+
+**Status:** ready-for-agent
+
+- [ ] Der Salesforce-Client listet Accounts mit mindestens einem offenen Projekt (ID, Name). Objekt-, Feld- und Statusnamen sind bis zur Klärung in Ticket 03 als klar benannte Annahmen an einer Stelle im Client hinterlegt.
+- [ ] Auswahldialog im Kunden-Tab mit Namensfilter; lädt im Hintergrund, zeigt Ladezustand und Fehler verständlich an.
+- [ ] Registrieren legt einen Kunden mit Namen des Accounts, Buchungssystem Salesforce und der Account-ID als externer Referenz an.
+- [ ] Bereits registrierte Accounts sind in der Liste markiert und nicht erneut registrierbar.
+- [ ] Eine Account-ID kann nur an einem Kunden hängen (leere Werte ausgenommen); das ist auf Datenebene durchgesetzt, inkl. Migration bestehender Datenbanken.
+- [ ] Ein bestehender Kunde lässt sich über "Verbinden…/Ändern…" mit einem Account verbinden; dabei wird sein Buchungssystem auf Salesforce gesetzt, Projekte und Einträge bleiben erhalten.
+- [ ] Bei Salesforce-Kunden ist das freie Textfeld für die externe Referenz durch die Anzeige des verbundenen Accounts ersetzt; bei Jira-Kunden und Kunden ohne Buchungssystem bleibt alles wie heute.
+- [ ] Salesforce-IDs sind nirgends in der UI sichtbar oder einzutippen.
+- [ ] Ohne Verbindung ist die Funktion deaktiviert bzw. meldet den Fehler; der Kunden-Tab selbst funktioniert offline unverändert.
+- [ ] Tests: Client-Abfrage mit gefälschtem HTTP (Treffer, leer, Fehler); Registrieren legt den Kunden korrekt an; Doppelregistrierung abgelehnt; nachträgliches Verbinden erhält Projekte und Einträge; Migration.
