@@ -23,6 +23,9 @@ from PyQt6.QtWidgets import (
 )
 
 from worklog import repository as repo
+from worklog.services import salesforce as sf_client
+from worklog.services import salesforce_registration as registration
+from worklog.services.salesforce_settings import SalesforceConfiguration, load_configuration
 
 ROUNDING_CHOICES = [
     ("Default", None),
@@ -47,6 +50,9 @@ class CustomersView(QWidget):
     def __init__(self, conn: sqlite3.Connection, parent=None) -> None:
         super().__init__(parent)
         self.conn = conn
+        # Injectable for tests; loading the configuration never touches the network.
+        self._sf_client_factory = sf_client.SalesforceClient
+        self._load_sf_configuration = load_configuration
 
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Kunde / Projekt", "System / Rundung", "Externe Ref."])
@@ -63,6 +69,8 @@ class CustomersView(QWidget):
         self.add_project_btn.clicked.connect(self.add_project)
         self.archive_btn = QPushButton("⌫ Archivieren / Aktivieren")
         self.archive_btn.clicked.connect(self.toggle_archive)
+        self.register_account_btn = QPushButton("Salesforce-Account registrieren…")
+        self.register_account_btn.clicked.connect(self.register_salesforce_account)
 
         # right-side stacked detail: customer / project / empty
         self.detail_stack = QStackedWidget()
@@ -83,6 +91,7 @@ class CustomersView(QWidget):
         btn_row.addWidget(self.add_customer_btn)
         btn_row.addWidget(self.add_project_btn)
         btn_row.addWidget(self.archive_btn)
+        btn_row.addWidget(self.register_account_btn)
         btn_row.addStretch(1)
         left.addLayout(btn_row)
         outer.addLayout(left, 2)
@@ -107,6 +116,21 @@ class CustomersView(QWidget):
         self.cust_system.currentIndexChanged.connect(self._on_cust_system_changed)
         self.cust_external_ref = QLineEdit()
         self.cust_external_ref_label = QLabel("Externe Ref.:")
+        # Salesforce-Kunden: the connected Account by name instead of a free text field for its ID.
+        self.cust_account_label = QLabel("Salesforce-Account:")
+        self.cust_account_name = QLabel("")
+        self.cust_account_name.setWordWrap(True)
+        self.cust_account_btn = QPushButton("Verbinden…")
+        self.cust_account_btn.clicked.connect(self.connect_salesforce_account)
+        self.cust_account_hint = QLabel("")
+        self.cust_account_hint.setStyleSheet("color: gray; font-size: 11px;")
+        self.cust_account_hint.setWordWrap(True)
+        account_row = QHBoxLayout()
+        account_row.setContentsMargins(0, 0, 0, 0)
+        account_row.addWidget(self.cust_account_name, 1)
+        account_row.addWidget(self.cust_account_btn)
+        self.cust_account_row = QWidget()
+        self.cust_account_row.setLayout(account_row)
         self.cust_archived = QCheckBox("Archiviert")
         self.cust_save_btn = QPushButton("Speichern")
         self.cust_save_btn.clicked.connect(self._save_customer)
@@ -116,6 +140,8 @@ class CustomersView(QWidget):
         form.addRow("Name:", self.cust_name)
         form.addRow("Buchungssystem:", self.cust_system)
         form.addRow(self.cust_external_ref_label, self.cust_external_ref)
+        form.addRow(self.cust_account_label, self.cust_account_row)
+        form.addRow("", self.cust_account_hint)
         form.addRow(self.cust_archived)
         form.addRow(self.cust_save_btn)
         w = QWidget()
@@ -168,7 +194,7 @@ class CustomersView(QWidget):
             citem = QTreeWidgetItem([
                 c.name + (" (archiviert)" if c.archived else ""),
                 system_label,
-                c.external_ref or "",
+                registration.external_reference_text(c),   # never a Salesforce ID
             ])
             citem.setData(0, Qt.ItemDataRole.UserRole, ("customer", c.id))
             self.tree.addTopLevelItem(citem)
@@ -187,6 +213,8 @@ class CustomersView(QWidget):
                 citem.addChild(pitem)
             citem.setExpanded(True)
         self._clear_detail()
+        if self.isVisible():   # refresh() runs on every data change; the keyring is only asked when shown
+            self._update_salesforce_availability()
 
     # ------------------ actions ------------------
 
@@ -267,7 +295,10 @@ class CustomersView(QWidget):
         self.cust_name.setText(c.name)
         idx = self.cust_system.findData(c.booking_system)
         self.cust_system.setCurrentIndex(idx if idx >= 0 else 0)
-        self.cust_external_ref.setText(c.external_ref or "")
+        self.cust_external_ref.setText(registration.external_ref_field_text(c))
+        account_text = registration.external_reference_text(c) if c.booking_system == "salesforce" else ""
+        self.cust_account_name.setText(account_text or "(nicht verbunden)")
+        self.cust_account_btn.setText("Ändern…" if account_text else "Verbinden…")
         self.cust_archived.setChecked(c.archived)
         self._apply_customer_system_visibility(c.booking_system)
         self.detail_stack.setCurrentIndex(1)
@@ -300,17 +331,18 @@ class CustomersView(QWidget):
         self._apply_customer_system_visibility(system)
 
     def _apply_customer_system_visibility(self, system: str | None) -> None:
-        # external_ref ist je nach System sinnvoll: SF = Account-ID, Jira = Default-Project-Key.
-        # Wir blenden es nur aus, wenn gar kein System gewählt ist.
-        show = system in ("jira", "salesforce")
-        self.cust_external_ref.setVisible(show)
-        self.cust_external_ref_label.setVisible(show)
-        if system == "jira":
-            self.cust_external_ref.setPlaceholderText("z.B. DIS (Jira-Projekt-Key, optional)")
-        elif system == "salesforce":
-            self.cust_external_ref.setPlaceholderText("z.B. Salesforce Account-ID")
-        else:
-            self.cust_external_ref.setPlaceholderText("")
+        # Jira: freies Textfeld (Default-Project-Key). Salesforce: Anzeige des verbundenen
+        # Accounts plus "Verbinden…/Ändern…" — die Account-ID wird nie gezeigt oder getippt.
+        show_text = system == "jira"
+        self.cust_external_ref.setVisible(show_text)
+        self.cust_external_ref_label.setVisible(show_text)
+        self.cust_external_ref.setPlaceholderText(
+            "z.B. DIS (Jira-Projekt-Key, optional)" if show_text else ""
+        )
+        show_account = system == "salesforce"
+        self.cust_account_label.setVisible(show_account)
+        self.cust_account_row.setVisible(show_account)
+        self.cust_account_hint.setVisible(show_account and bool(self.cust_account_hint.text()))
 
     def _apply_project_external_ref_hint(self, customer_system: str | None) -> None:
         if customer_system == "salesforce":
@@ -336,14 +368,19 @@ class CustomersView(QWidget):
         if not name:
             QMessageBox.warning(self, "Fehler", "Name darf nicht leer sein.")
             return
+        stored = repo.get_customer(self.conn, self._current_customer_id)
+        if stored is None:
+            self.refresh()
+            return
+        system = self.cust_system.currentData()
         try:
             repo.update_customer(
                 self.conn,
                 self._current_customer_id,
                 name=name,
                 archived=self.cust_archived.isChecked(),
-                booking_system=self.cust_system.currentData(),
-                external_ref=self.cust_external_ref.text().strip() or None,
+                booking_system=system,
+                external_ref=registration.external_ref_to_save(stored, system, self.cust_external_ref.text()),
             )
         except sqlite3.IntegrityError:
             QMessageBox.warning(self, "Fehler", "Kundenname existiert bereits.")
@@ -372,6 +409,57 @@ class CustomersView(QWidget):
             return
         self.refresh()
         self.changed.emit()
+
+    # ------------------ Salesforce: Registrieren / Verbinden ------------------
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._update_salesforce_availability()
+
+    def _update_salesforce_availability(self) -> SalesforceConfiguration:
+        """Without a complete connection Registrieren and Verbinden are disabled and say what is missing."""
+        config = self._load_sf_configuration(self.conn)
+        available = config.is_connection_complete
+        missing = config.connection_missing_text
+        self.register_account_btn.setEnabled(available)
+        self.register_account_btn.setToolTip(
+            "Accounts mit offenen Projekten aus Salesforce als Kunden registrieren." if available else missing
+        )
+        self.cust_account_btn.setEnabled(available)
+        self.cust_account_btn.setToolTip("" if available else missing)
+        self.cust_account_hint.setText("" if available else missing)
+        self._apply_customer_system_visibility(self.cust_system.currentData())
+        return config
+
+    def _choose_salesforce_account(self, apply, *, title: str, action_label: str) -> None:
+        config = self._update_salesforce_availability()
+        if not config.is_connection_complete or config.credentials is None:
+            QMessageBox.information(self, "Salesforce", config.connection_missing_text)
+            return
+        from worklog.ui.salesforce_account_dialog import SalesforceAccountDialog
+        dlg = SalesforceAccountDialog(
+            self.conn, config.credentials, apply,
+            title=title, action_label=action_label,
+            client_factory=self._sf_client_factory, parent=self,
+        )
+        if dlg.exec():
+            self.refresh()
+            self.changed.emit()
+
+    def register_salesforce_account(self) -> None:
+        self._choose_salesforce_account(
+            lambda account: registration.register_account(self.conn, account),
+            title="Salesforce-Account registrieren", action_label="Registrieren",
+        )
+
+    def connect_salesforce_account(self) -> None:
+        customer_id = self._current_customer_id
+        if customer_id is None:
+            return
+        self._choose_salesforce_account(
+            lambda account: registration.connect_customer(self.conn, customer_id, account),
+            title="Kunde mit Salesforce-Account verbinden", action_label="Verbinden",
+        )
 
     def _pick_color(self) -> None:
         initial = QColor(self._color_value) if self._color_value else QColor("#3B82F6")

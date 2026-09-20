@@ -14,6 +14,7 @@ class Customer:
     external_ref: Optional[str] = None    # e.g. Salesforce Account-ID, Jira project key
     archived: bool = False
     created_at: Optional[datetime] = None
+    external_name: Optional[str] = None   # name of the connected Salesforce-Account (shown instead of the ID)
 
 
 @dataclass(slots=True)
