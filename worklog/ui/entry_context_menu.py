@@ -6,7 +6,7 @@ ordered list of affected entries; new menu items are added here only.
 from __future__ import annotations
 
 import sqlite3
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional
 
 from PyQt6.QtCore import QEvent, QObject, Qt
 from PyQt6.QtGui import QAction
@@ -15,6 +15,12 @@ from PyQt6.QtWidgets import QAbstractItemView, QMenu, QMessageBox, QWidget
 from worklog import repository as repo
 from worklog.models import LogEntry
 from worklog.services.entry_menu import flag_menu_state, plan_entry_menu
+from worklog.services.timer import (
+    AlreadyRunningError,
+    ProjectArchivedError,
+    SourceEntryRunningError,
+    TimerService,
+)
 from worklog.ui.jira_booking import book_jira, clear_jira_booking
 
 
@@ -49,6 +55,27 @@ def delete_entries(parent: QWidget, conn: sqlite3.Connection, log_ids: list[int]
     return True
 
 
+def continue_entry(parent: QWidget, conn: sqlite3.Connection, log_id: int) -> bool:
+    """Fortsetzen via the timer service; a refusal is shown as a hint.
+
+    The menu item and the button in the Logs tab both end up here. Returns True
+    when a new running entry was started.
+    """
+    try:
+        TimerService(conn).continue_entry(log_id)
+    except ProjectArchivedError:
+        QMessageBox.information(parent, "Fortsetzen", "Projekt ist archiviert.")
+    except AlreadyRunningError:
+        QMessageBox.information(parent, "Fortsetzen", "Dieser Eintrag läuft bereits.")
+    except SourceEntryRunningError:
+        QMessageBox.information(parent, "Fortsetzen", "Dieser Eintrag läuft selbst noch.")
+    except LookupError:
+        QMessageBox.information(parent, "Fortsetzen", "Dieser Eintrag existiert nicht mehr.")
+    else:
+        return True
+    return False
+
+
 def build_entry_context_menu(
     parent: QWidget,
     conn: sqlite3.Connection,
@@ -56,15 +83,13 @@ def build_entry_context_menu(
     *,
     on_edit: Callable[[int], None],
     on_changed: Callable[[], None],
-    leading_actions: Sequence[QAction] = (),
     move_anchor_id: Optional[int] = None,
 ) -> QMenu:
     """Build the menu for `logs` (ordered, at least one entry).
 
     `on_edit` opens the edit dialog of the calling view; `on_changed` is called
-    after every action that changed data. `leading_actions` are view-specific
-    items placed above "Bearbeiten". `move_anchor_id` (the clicked entry) adds
-    "Verschieben auf…", with the date picker preset to that entry's day.
+    after every action that changed data. `move_anchor_id` (the clicked entry)
+    adds "Verschieben auf…", with the date picker preset to that entry's day.
     """
     plan = plan_entry_menu(logs)
     log_ids = [int(log.id) for log in logs]
@@ -76,9 +101,15 @@ def build_entry_context_menu(
     menu.addAction(header)
     menu.addSeparator()
 
-    for act in leading_actions:
-        act.setParent(menu)
-        menu.addAction(act)
+    continue_act = QAction("Fortsetzen ▶", menu)
+    continue_act.setEnabled(plan.can_continue)
+
+    def continue_(_checked=False) -> None:
+        if continue_entry(parent, conn, log_ids[0]):
+            on_changed()
+
+    continue_act.triggered.connect(continue_)
+    menu.addAction(continue_act)
 
     edit_act = QAction("✎  Bearbeiten…", menu)
     edit_act.setEnabled(plan.can_edit)
