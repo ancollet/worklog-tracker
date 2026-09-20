@@ -92,6 +92,13 @@ class QuickAddPopup(QDialog):
         self.start_btn.clicked.connect(self._submit)
         self.cancel_btn.clicked.connect(self.reject)
 
+        self.stop_btn = QPushButton("⏸ Stop")
+        self.stop_btn.clicked.connect(self._stop_timer)
+        self.stop_btn.setVisible(self.timer.is_running())
+
+        self.add_hours_btn = QPushButton("⏰ Stunden nachtragen…")
+        self.add_hours_btn.clicked.connect(self._open_add_log)
+
         outer = QVBoxLayout(self)
         outer.addWidget(self.title_label)
         form = QFormLayout()
@@ -102,8 +109,10 @@ class QuickAddPopup(QDialog):
         btn_row = QHBoxLayout()
         btn_row.addWidget(self.cancel_btn)
         btn_row.addStretch(1)
+        btn_row.addWidget(self.stop_btn)
         btn_row.addWidget(self.start_btn)
         outer.addLayout(btn_row)
+        outer.addWidget(self.add_hours_btn)
 
         # populate completers
         self.project_combo.currentIndexChanged.connect(self._on_project_changed)
@@ -143,6 +152,20 @@ class QuickAddPopup(QDialog):
             int(pid) if pid is not None else None,
             self.task_input.text().strip() or None,
         )
+
+    def _stop_timer(self) -> None:
+        self.timer.stop()
+        self.accept()
+
+    def _open_add_log(self) -> None:
+        from worklog.ui.log_dialog import LogDialog
+        # Hide the popup first so the modal log dialog isn't anchored above it.
+        self.hide()
+        dlg = LogDialog(self.conn, parent=None)
+        if dlg.exec():
+            self.accept()
+        else:
+            self.reject()
 
     def _submit(self) -> None:
         pid = self.project_combo.currentData()

@@ -16,7 +16,24 @@ Features:
 - [`uv`](https://docs.astral.sh/uv/) (Package-Manager)
 - Python 3.11+ (uv installiert es bei Bedarf automatisch)
 
-## Setup
+## Installation (Daily-Driver)
+
+Für den täglichen Einsatz: `worklog` global verfügbar machen, Icon ins Dock,
+`.desktop`-Eintrag im App-Launcher:
+
+```bash
+./packaging/install.sh
+```
+
+Was passiert:
+- `uv tool install` legt den `worklog`-CLI nach `~/.local/bin/`
+- SVG-Icon wandert nach `~/.local/share/icons/hicolor/scalable/apps/`
+- `.desktop`-Eintrag (mit Action **Quick Add**) nach `~/.local/share/applications/`
+
+Updaten: `git pull && ./packaging/install.sh` (idempotent via `--reinstall`).
+Deinstallieren: `./packaging/uninstall.sh` (Datenverzeichnis bleibt erhalten).
+
+## Dev-Setup
 
 ```bash
 uv sync --extra dev
@@ -24,7 +41,7 @@ uv sync --extra dev
 
 `uv sync` legt `.venv/` an, installiert Worklog im Editable-Modus inkl. Dev-Dependencies und schreibt `uv.lock`.
 
-## Starten
+## Starten (Dev)
 
 ```bash
 uv run worklog
@@ -62,12 +79,18 @@ uv run pytest -v
 | `Ctrl+N` | Timer-Tab fokussieren |
 | `Ctrl+L` | Add-Log-Dialog |
 
-## Tray
+## Tray / Panel-Applet
+
+Linksklick auf das Tray-Icon öffnet immer das frameless Quick-Add-Popup
+direkt am Panel — fungiert damit als minimales Tracking-Applet:
+
+- **Start ▶** (idle) bzw. **Wechseln ↻** (running) — startet/wechselt Task
+- **⏸ Stop** — beendet den aktiven Timer (nur sichtbar wenn läuft)
+- **⏰ Stunden nachtragen…** — öffnet den manuellen Log-Dialog
 
 | Aktion | Verhalten |
 |--------|-----------|
-| Linksklick (idle) | Quick-Add-Popup |
-| Linksklick (running) | Hauptfenster |
+| Linksklick | Quick-Add-Popup (mit Stop/Add-Hours-Buttons) |
 | Mittelklick | Timer toggeln |
 | Rechtsklick | Kontextmenü mit Recent Tasks, Edit, Switch, Settings |
 

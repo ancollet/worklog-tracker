@@ -1,0 +1,23 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Worklog
+GenericName=Time Tracker
+Comment=Time tracker / worklog for Jira-style task IDs
+Keywords=time;tracker;worklog;timer;jira;
+Exec=worklog
+TryExec=worklog
+Icon=worklog
+Terminal=false
+Categories=Office;ProjectManagement;Utility;
+StartupNotify=true
+StartupWMClass=worklog
+Actions=QuickAdd;ShowWindow;
+
+[Desktop Action QuickAdd]
+Name=Quick Add
+Exec=worklog --quick
+
+[Desktop Action ShowWindow]
+Name=Show Window
+Exec=worklog

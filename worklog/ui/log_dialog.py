@@ -58,6 +58,9 @@ class LogDialog(QDialog):
         super().__init__(parent)
         self.conn = conn
         self.log_id = log_id
+        # Original time-of-day of the edited entry; reused by the "Datum + Dauer"
+        # mode on save so editing the duration doesn't move the entry to now.
+        self._loaded_start_time = None
         self.setWindowTitle("Log bearbeiten" if log_id else "Add Log")
         self.setMinimumWidth(440)
 
@@ -214,14 +217,20 @@ class LogDialog(QDialog):
         self.project_combo.setCurrentIndex(self.project_combo.findData(log.project_id))
         self.task_input.setText(log.task or "")
         self.desc_input.setPlainText(log.description or "")
-        if log.started_at and log.ended_at:
-            self.mode_se.setChecked(True)
-            self.start_edit.setDateTime(QDateTime(log.started_at.replace(tzinfo=None)))
-            self.end_edit.setDateTime(QDateTime(log.ended_at.replace(tzinfo=None)))
-        elif log.started_at:
-            self.mode_dur.setChecked(True)
-            self.date_edit.setDate(QDateTime(log.started_at.replace(tzinfo=None)).date())
+        # Populate *both* mode pages from the entry so the original day/time is
+        # preserved no matter which mode the user saves in (switching to
+        # "Datum + Dauer" must not silently re-book the entry on today).
+        if log.started_at:
+            naive_start = log.started_at.replace(tzinfo=None)
+            self._loaded_start_time = naive_start.time()
+            self.start_edit.setDateTime(QDateTime(naive_start))
+            self.date_edit.setDate(QDateTime(naive_start).date())
             self.duration_spin.setValue((log.duration_seconds or 0) / 3600)
+        if log.ended_at:
+            self.end_edit.setDateTime(QDateTime(log.ended_at.replace(tzinfo=None)))
+            self.mode_se.setChecked(True)
+        else:
+            self.mode_dur.setChecked(True)
         idx = self.round_combo.findData(log.rounded_to_minutes)
         self.round_combo.setCurrentIndex(idx if idx >= 0 else 0)
 
@@ -251,7 +260,10 @@ class LogDialog(QDialog):
         else:
             date = self.date_edit.date().toPyDate()
             now = datetime.now().astimezone()
-            start_dt = datetime(date.year, date.month, date.day, now.hour, 0, tzinfo=now.tzinfo)
+            tod = self._loaded_start_time or now.time().replace(minute=0, second=0, microsecond=0)
+            start_dt = datetime(
+                date.year, date.month, date.day, tod.hour, tod.minute, tzinfo=now.tzinfo
+            )
             seconds = int(self.duration_spin.value() * 3600)
             if seconds <= 0:
                 QMessageBox.warning(self, "Fehler", "Dauer muss > 0 sein.")

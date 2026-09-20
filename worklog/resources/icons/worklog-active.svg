@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bodyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#4338CA"/>
+    </linearGradient>
+    <radialGradient id="faceGrad" cx="0.5" cy="0.4" r="0.7">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E0E7FF"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="44" y="50" width="22" height="34" rx="6" fill="#4338CA" transform="rotate(-32 55 67)"/>
+  <rect x="190" y="50" width="22" height="34" rx="6" fill="#4338CA" transform="rotate(32 201 67)"/>
+
+  <rect x="112" y="14" width="32" height="22" rx="5" fill="#4338CA"/>
+  <rect x="104" y="32" width="48" height="16" rx="5" fill="#4338CA"/>
+
+  <circle cx="128" cy="150" r="88" fill="url(#bodyGrad)"/>
+  <circle cx="128" cy="150" r="74" fill="url(#faceGrad)"/>
+
+  <rect x="124" y="82" width="8" height="16" rx="3" fill="#4338CA"/>
+  <rect x="124" y="202" width="8" height="16" rx="3" fill="#4338CA"/>
+  <rect x="56" y="146" width="16" height="8" rx="3" fill="#4338CA"/>
+  <rect x="184" y="146" width="16" height="8" rx="3" fill="#4338CA"/>
+
+  <g fill="#A5B4FC">
+    <circle cx="160" cy="89" r="3"/>
+    <circle cx="185" cy="113" r="3"/>
+    <circle cx="185" cy="187" r="3"/>
+    <circle cx="160" cy="211" r="3"/>
+    <circle cx="96"  cy="211" r="3"/>
+    <circle cx="71"  cy="187" r="3"/>
+    <circle cx="71"  cy="113" r="3"/>
+    <circle cx="96"  cy="89"  r="3"/>
+  </g>
+
+  <line x1="128" y1="150" x2="172" y2="112"
+        stroke="#EF4444" stroke-width="9" stroke-linecap="round"/>
+
+  <circle cx="128" cy="150" r="9" fill="#4338CA"/>
+  <circle cx="128" cy="150" r="4" fill="#FFFFFF"/>
+
+  <!-- Running badge (bottom-right green dot) -->
+  <circle cx="208" cy="222" r="28" fill="#FFFFFF"/>
+  <circle cx="208" cy="222" r="22" fill="#10B981"/>
+</svg>

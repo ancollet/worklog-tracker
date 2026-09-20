@@ -11,9 +11,11 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from worklog import db as db_module
-from worklog.paths import lock_path, socket_path
+from worklog import repository as repo
+from worklog.paths import icon_path, lock_path, socket_path
 from worklog.services.timer import TimerService
 from worklog.ui.main_window import MainWindow
+from worklog.ui.theme import DEFAULT_UI_THEME, SETTINGS_UI_THEME, apply_theme
 from worklog.ui.tray import TrayController
 
 
@@ -76,9 +78,19 @@ def main() -> int:
         return 0  # forwarded to running instance
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Worklog")
+    # IDs must all align for Wayland docks (COSMIC/GNOME) to associate
+    # the running window with worklog.desktop:
+    #   - applicationName     → Wayland app_id fallback (must be lowercase)
+    #   - desktopFileName     → explicit match against ~/.../applications/worklog.desktop
+    #   - displayName         → human-visible label
+    app.setApplicationName("worklog")
+    app.setDesktopFileName("worklog")
+    app.setApplicationDisplayName("Worklog")
     app.setQuitOnLastWindowClosed(False)
-    icon = QIcon.fromTheme("appointment-new")
+    try:
+        icon = QIcon(str(icon_path()))
+    except (FileNotFoundError, ModuleNotFoundError):
+        icon = QIcon.fromTheme("appointment-new")
     if not icon.isNull():
         app.setWindowIcon(icon)
 
@@ -90,6 +102,14 @@ def main() -> int:
         )
 
     conn = db_module.connect()
+
+    # Theming is opt-in; the default is the plain native Qt look. WORKLOG_THEME
+    # env var wins, else the persisted 'ui_theme' setting, else the default.
+    theme = os.environ.get("WORKLOG_THEME") or repo.get_setting(
+        conn, SETTINGS_UI_THEME, DEFAULT_UI_THEME
+    )
+    apply_theme(app, theme)
+
     timer_service = TimerService(conn)
 
     window = MainWindow(conn, timer_service)

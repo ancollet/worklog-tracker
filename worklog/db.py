@@ -8,7 +8,7 @@ from typing import Iterator
 
 from worklog.paths import db_path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 INITIAL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -16,10 +16,12 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 
 CREATE TABLE IF NOT EXISTS customer (
-    id          INTEGER PRIMARY KEY,
-    name        TEXT NOT NULL UNIQUE,
-    archived    INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL
+    id              INTEGER PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    booking_system  TEXT,
+    external_ref    TEXT,
+    archived        INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS project (
@@ -28,23 +30,27 @@ CREATE TABLE IF NOT EXISTS project (
     name            TEXT NOT NULL,
     color           TEXT,
     round_minutes   INTEGER,
+    external_ref    TEXT,
     archived        INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL,
     UNIQUE(customer_id, name)
 );
 
 CREATE TABLE IF NOT EXISTS log_entry (
-    id                  INTEGER PRIMARY KEY,
-    project_id          INTEGER NOT NULL REFERENCES project(id),
-    task                TEXT,
-    description         TEXT,
-    started_at          TEXT NOT NULL,
-    ended_at            TEXT,
-    duration_seconds    INTEGER,
-    rounded_to_minutes  INTEGER,
-    is_manual           INTEGER NOT NULL DEFAULT 0,
-    created_at          TEXT NOT NULL,
-    updated_at          TEXT NOT NULL
+    id                    INTEGER PRIMARY KEY,
+    project_id            INTEGER NOT NULL REFERENCES project(id),
+    task                  TEXT,
+    description           TEXT,
+    started_at            TEXT NOT NULL,
+    ended_at              TEXT,
+    duration_seconds      INTEGER,
+    rounded_to_minutes    INTEGER,
+    is_manual             INTEGER NOT NULL DEFAULT 0,
+    external_worklog_id   TEXT,
+    external_worklog_url  TEXT,
+    external_synced_at    TEXT,
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_log_entry_project ON log_entry(project_id);
@@ -82,6 +88,13 @@ CREATE INDEX IF NOT EXISTS idx_log_entry_flag_log ON log_entry_flag(log_id);
 
 _LEGACY_DEFAULT_FLAG_NAMES = ("gebucht", "invoiced", "canceled")
 
+BOOKING_SYSTEMS = ("jira", "salesforce")
+
+
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(r["name"] == column for r in rows)
+
 
 def connect(path: Path | str | None = None) -> sqlite3.Connection:
     """Open a connection with sane defaults and run migrations."""
@@ -118,6 +131,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
                 """,
                 _LEGACY_DEFAULT_FLAG_NAMES,
             )
+        if current < 4:
+            if not _has_column(conn, "customer", "booking_system"):
+                conn.execute("ALTER TABLE customer ADD COLUMN booking_system TEXT")
+            if not _has_column(conn, "customer", "external_ref"):
+                conn.execute("ALTER TABLE customer ADD COLUMN external_ref TEXT")
+            if not _has_column(conn, "project", "external_ref"):
+                conn.execute("ALTER TABLE project ADD COLUMN external_ref TEXT")
+        if current < 5:
+            for col in ("external_worklog_id", "external_worklog_url", "external_synced_at"):
+                if not _has_column(conn, "log_entry", col):
+                    conn.execute(f"ALTER TABLE log_entry ADD COLUMN {col} TEXT")
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
 

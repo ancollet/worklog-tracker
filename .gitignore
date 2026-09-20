@@ -19,3 +19,10 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+
+# Secrets / local env
+.env
+
+# Build artifacts
+build/
+dist/

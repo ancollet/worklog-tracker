@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bodyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#4338CA"/>
+    </linearGradient>
+    <radialGradient id="faceGrad" cx="0.5" cy="0.4" r="0.7">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E0E7FF"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Side buttons (start/lap) -->
+  <rect x="44" y="50" width="22" height="34" rx="6" fill="#4338CA" transform="rotate(-32 55 67)"/>
+  <rect x="190" y="50" width="22" height="34" rx="6" fill="#4338CA" transform="rotate(32 201 67)"/>
+
+  <!-- Crown / top button -->
+  <rect x="112" y="14" width="32" height="22" rx="5" fill="#4338CA"/>
+  <rect x="104" y="32" width="48" height="16" rx="5" fill="#4338CA"/>
+
+  <!-- Stopwatch body -->
+  <circle cx="128" cy="150" r="88" fill="url(#bodyGrad)"/>
+  <circle cx="128" cy="150" r="74" fill="url(#faceGrad)"/>
+
+  <!-- Hour ticks (12 / 3 / 6 / 9) -->
+  <rect x="124" y="82" width="8" height="16" rx="3" fill="#4338CA"/>
+  <rect x="124" y="202" width="8" height="16" rx="3" fill="#4338CA"/>
+  <rect x="56" y="146" width="16" height="8" rx="3" fill="#4338CA"/>
+  <rect x="184" y="146" width="16" height="8" rx="3" fill="#4338CA"/>
+
+  <!-- Minor ticks at 1/2/4/5/7/8/10/11 -->
+  <g fill="#A5B4FC">
+    <circle cx="160" cy="89" r="3"/>
+    <circle cx="185" cy="113" r="3"/>
+    <circle cx="185" cy="187" r="3"/>
+    <circle cx="160" cy="211" r="3"/>
+    <circle cx="96"  cy="211" r="3"/>
+    <circle cx="71"  cy="187" r="3"/>
+    <circle cx="71"  cy="113" r="3"/>
+    <circle cx="96"  cy="89"  r="3"/>
+  </g>
+
+  <!-- Hand pointing at ~1 o'clock (active tracking) -->
+  <line x1="128" y1="150" x2="172" y2="112"
+        stroke="#EF4444" stroke-width="9" stroke-linecap="round"/>
+
+  <!-- Center pivot -->
+  <circle cx="128" cy="150" r="9" fill="#4338CA"/>
+  <circle cx="128" cy="150" r="4" fill="#FFFFFF"/>
+</svg>

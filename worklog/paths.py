@@ -2,9 +2,17 @@
 from __future__ import annotations
 
 import os
+from importlib import resources
 from pathlib import Path
 
 APP_NAME = "worklog"
+
+
+def icon_path() -> Path:
+    """Return filesystem path to the packaged app icon SVG."""
+    ref = resources.files("worklog").joinpath("resources/icons/worklog.svg")
+    with resources.as_file(ref) as p:
+        return Path(p)
 
 
 def _xdg(env_var: str, fallback: str) -> Path:

@@ -19,24 +19,30 @@ def _parse_dt(value: Optional[str]) -> Optional[datetime]:
 
 
 def _row_to_customer(row: sqlite3.Row) -> Customer:
+    keys = row.keys()
     return Customer(
         id=row["id"],
         name=row["name"],
+        booking_system=row["booking_system"] if "booking_system" in keys else None,
+        external_ref=row["external_ref"] if "external_ref" in keys else None,
         archived=bool(row["archived"]),
         created_at=_parse_dt(row["created_at"]),
     )
 
 
 def _row_to_project(row: sqlite3.Row) -> Project:
+    keys = row.keys()
     return Project(
         id=row["id"],
         customer_id=row["customer_id"],
         name=row["name"],
         color=row["color"],
         round_minutes=row["round_minutes"],
+        external_ref=row["external_ref"] if "external_ref" in keys else None,
         archived=bool(row["archived"]),
         created_at=_parse_dt(row["created_at"]),
-        customer_name=row["customer_name"] if "customer_name" in row.keys() else None,
+        customer_name=row["customer_name"] if "customer_name" in keys else None,
+        customer_booking_system=row["customer_booking_system"] if "customer_booking_system" in keys else None,
     )
 
 
@@ -52,11 +58,15 @@ def _row_to_log(row: sqlite3.Row) -> LogEntry:
         duration_seconds=row["duration_seconds"],
         rounded_to_minutes=row["rounded_to_minutes"],
         is_manual=bool(row["is_manual"]),
+        external_worklog_id=row["external_worklog_id"] if "external_worklog_id" in keys else None,
+        external_worklog_url=row["external_worklog_url"] if "external_worklog_url" in keys else None,
+        external_synced_at=_parse_dt(row["external_synced_at"]) if "external_synced_at" in keys else None,
         created_at=_parse_dt(row["created_at"]),
         updated_at=_parse_dt(row["updated_at"]),
         project_name=row["project_name"] if "project_name" in keys else None,
         customer_name=row["customer_name"] if "customer_name" in keys else None,
         project_color=row["project_color"] if "project_color" in keys else None,
+        customer_booking_system=row["customer_booking_system"] if "customer_booking_system" in keys else None,
     )
 
 
@@ -70,19 +80,38 @@ def list_customers(conn: sqlite3.Connection, *, include_archived: bool = False) 
     return [_row_to_customer(r) for r in rows]
 
 
-def create_customer(conn: sqlite3.Connection, name: str) -> Customer:
+def get_customer(conn: sqlite3.Connection, customer_id: int) -> Optional[Customer]:
+    row = conn.execute("SELECT * FROM customer WHERE id = ?", (customer_id,)).fetchone()
+    return _row_to_customer(row) if row else None
+
+
+def create_customer(
+    conn: sqlite3.Connection,
+    name: str,
+    *,
+    booking_system: Optional[str] = None,
+    external_ref: Optional[str] = None,
+) -> Customer:
     cur = conn.execute(
-        "INSERT INTO customer(name, created_at) VALUES (?, ?)",
-        (name, _now_iso()),
+        "INSERT INTO customer(name, booking_system, external_ref, created_at) VALUES (?, ?, ?, ?)",
+        (name, booking_system, external_ref, _now_iso()),
     )
     cid = cur.lastrowid
     return _row_to_customer(conn.execute("SELECT * FROM customer WHERE id = ?", (cid,)).fetchone())
 
 
-def update_customer(conn: sqlite3.Connection, customer_id: int, *, name: str, archived: bool) -> None:
+def update_customer(
+    conn: sqlite3.Connection,
+    customer_id: int,
+    *,
+    name: str,
+    archived: bool,
+    booking_system: Optional[str] = None,
+    external_ref: Optional[str] = None,
+) -> None:
     conn.execute(
-        "UPDATE customer SET name = ?, archived = ? WHERE id = ?",
-        (name, int(archived), customer_id),
+        "UPDATE customer SET name = ?, booking_system = ?, external_ref = ?, archived = ? WHERE id = ?",
+        (name, booking_system, external_ref, int(archived), customer_id),
     )
 
 
@@ -94,7 +123,7 @@ def delete_customer(conn: sqlite3.Connection, customer_id: int) -> None:
 # ---------- Projects ----------
 
 PROJECT_SELECT = """
-SELECT p.*, c.name AS customer_name
+SELECT p.*, c.name AS customer_name, c.booking_system AS customer_booking_system
 FROM project p
 JOIN customer c ON c.id = p.customer_id
 """
@@ -120,11 +149,12 @@ def create_project(
     name: str,
     color: Optional[str] = None,
     round_minutes: Optional[int] = None,
+    external_ref: Optional[str] = None,
 ) -> Project:
     cur = conn.execute(
-        "INSERT INTO project(customer_id, name, color, round_minutes, created_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (customer_id, name, color, round_minutes, _now_iso()),
+        "INSERT INTO project(customer_id, name, color, round_minutes, external_ref, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (customer_id, name, color, round_minutes, external_ref, _now_iso()),
     )
     pid = cur.lastrowid
     proj = get_project(conn, pid)
@@ -140,17 +170,20 @@ def update_project(
     color: Optional[str],
     round_minutes: Optional[int],
     archived: bool,
+    external_ref: Optional[str] = None,
 ) -> None:
     conn.execute(
-        "UPDATE project SET name = ?, color = ?, round_minutes = ?, archived = ? WHERE id = ?",
-        (name, color, round_minutes, int(archived), project_id),
+        "UPDATE project SET name = ?, color = ?, round_minutes = ?, external_ref = ?, archived = ? WHERE id = ?",
+        (name, color, round_minutes, external_ref, int(archived), project_id),
     )
 
 
 # ---------- Log entries ----------
 
 LOG_SELECT = """
-SELECT l.*, p.name AS project_name, p.color AS project_color, c.name AS customer_name
+SELECT l.*,
+       p.name AS project_name, p.color AS project_color,
+       c.name AS customer_name, c.booking_system AS customer_booking_system
 FROM log_entry l
 JOIN project p ON p.id = l.project_id
 JOIN customer c ON c.id = p.customer_id
@@ -248,6 +281,29 @@ def update_log(
 
 def delete_log(conn: sqlite3.Connection, log_id: int) -> None:
     conn.execute("DELETE FROM log_entry WHERE id = ?", (log_id,))
+
+
+def set_log_external_ref(
+    conn: sqlite3.Connection,
+    log_id: int,
+    *,
+    worklog_id: Optional[str],
+    worklog_url: Optional[str] = None,
+    synced_at_iso: Optional[str] = None,
+) -> None:
+    """Persist the external system's worklog-id (idempotency) after a successful sync.
+
+    Pass worklog_id=None to clear the reference (e.g. after the user undid the booking).
+    """
+    conn.execute(
+        """
+        UPDATE log_entry
+        SET external_worklog_id = ?, external_worklog_url = ?, external_synced_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (worklog_id, worklog_url, synced_at_iso, _now_iso(), log_id),
+    )
 
 
 # ---------- App state ----------
@@ -510,3 +566,21 @@ def delete_logs_bulk(conn: sqlite3.Connection, log_ids: list[int]) -> None:
         return
     placeholders = ",".join("?" * len(log_ids))
     conn.execute(f"DELETE FROM log_entry WHERE id IN ({placeholders})", log_ids)
+
+
+# ---------- Generic key/value settings ----------
+
+def get_setting(conn: sqlite3.Connection, key: str, default: Optional[str] = None) -> Optional[str]:
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(conn: sqlite3.Connection, key: str, value: Optional[str]) -> None:
+    if value is None or value == "":
+        conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+        return
+    conn.execute(
+        "INSERT INTO settings(key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )

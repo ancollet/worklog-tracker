@@ -3,35 +3,42 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
-from PyQt6.QtCore import QPoint, QTimer
+from PyQt6.QtCore import QPoint, QRectF, QTimer
 from PyQt6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPixmap
+from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
 from worklog import repository as repo
+from worklog.paths import icon_path
 from worklog.services.rounding import format_hms
 from worklog.services.timer import TimerService
 from worklog.ui.quick_add import QuickAddPopup
 
 
 def _build_icon(running: bool) -> QIcon:
-    """Generate a simple circle icon programmatically (no asset files required)."""
+    """Themed icon lookup (sets SNI IconName so COSMIC/Plasma StatusArea
+    can find it via hicolor); fall back to the packaged SVG, or a
+    programmatic pixmap if everything else fails."""
+    name = "worklog-active" if running else "worklog"
+    themed = QIcon.fromTheme(name)
+    if not themed.isNull():
+        return themed
+    # Fallback chain: load packaged SVG, then overlay status badge.
+    try:
+        return QIcon(str(icon_path()))
+    except Exception:
+        pass
     pix = QPixmap(64, 64)
     pix.fill(QColor(0, 0, 0, 0))
     painter = QPainter(pix)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    color = QColor("#10B981") if running else QColor("#6B7280")
-    painter.setBrush(color)
+    painter.setBrush(QColor("#4338CA"))
     painter.setPen(QColor("#1F2937"))
     painter.drawEllipse(6, 6, 52, 52)
-    # play / pause glyph
-    painter.setBrush(QColor("white"))
-    painter.setPen(QColor("white"))
-    if running:
-        painter.drawRect(22, 20, 6, 24)
-        painter.drawRect(36, 20, 6, 24)
-    else:
-        from PyQt6.QtGui import QPolygon
-        painter.drawPolygon(QPolygon([QPoint(26, 20), QPoint(26, 44), QPoint(46, 32)]))
+    dot_color = QColor("#10B981") if running else QColor("#9CA3AF")
+    painter.setBrush(dot_color)
+    painter.setPen(QColor("#FFFFFF"))
+    painter.drawEllipse(40, 40, 22, 22)
     painter.end()
     return QIcon(pix)
 
@@ -83,10 +90,8 @@ class TrayController:
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            if self.timer.is_running():
-                self.show_main_window()
-            else:
-                self.open_quick_add(anchor=self._tray_anchor())
+            mode = QuickAddPopup.MODE_EDIT if self.timer.is_running() else QuickAddPopup.MODE_START
+            self.open_quick_add(mode=mode, anchor=self._tray_anchor())
         elif reason == QSystemTrayIcon.ActivationReason.MiddleClick:
             self._toggle_timer()
 
