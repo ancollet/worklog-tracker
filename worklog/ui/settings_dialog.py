@@ -4,7 +4,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -16,6 +16,8 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QVBoxLayout,
@@ -27,6 +29,9 @@ from worklog.services import credentials, jira as jira_client, salesforce as sf_
 from worklog.services.salesforce_settings import (
     SETTINGS_SF_CONSUMER_KEY,
     SETTINGS_SF_INSTANCE_URL,
+    LeistendePerson,
+    load_leistende_person,
+    save_leistende_person,
 )
 from worklog.ui.theme import DEFAULT_UI_THEME, SETTINGS_UI_THEME, THEMES, apply_theme
 
@@ -42,30 +47,35 @@ ROUNDING_CHOICES = [
 SETTINGS_JIRA_BASE_URL = "jira.base_url"
 SETTINGS_JIRA_EMAIL = "jira.email"
 
-# Connection tests that outlive their dialog are parked here until they finish,
+# Salesforce calls that outlive their dialog are parked here until they finish,
 # so a running QThread is never garbage-collected.
-_running_connection_tests: set = set()
+_running_salesforce_calls: set = set()
 
 
-class _SalesforceConnectionTest(QThread):
-    """Runs "Verbindung testen" off the UI thread. Emits (ok, text)."""
+class _SalesforceCall(QThread):
+    """Runs one call to Salesforce off the UI thread.
 
-    finished_with = pyqtSignal(bool, str)
+    `work` gets the client and returns the result. Emits (True, result) or
+    (False, error text).
+    """
 
-    def __init__(self, creds: sf_client.SalesforceCredentials, client_factory) -> None:
+    finished_with = pyqtSignal(bool, object)
+
+    def __init__(self, creds: sf_client.SalesforceCredentials, client_factory, work) -> None:
         super().__init__()
         self._creds = creds
         self._client_factory = client_factory
+        self._work = work
 
     def run(self) -> None:
         try:
-            self._client_factory(self._creds).test_connection()
+            result = self._work(self._client_factory(self._creds))
         except sf_client.SalesforceError as exc:
             self.finished_with.emit(False, str(exc))
         except Exception as exc:  # never let a worker thread die silently
             self.finished_with.emit(False, f"Unerwarteter Fehler: {exc}")
         else:
-            self.finished_with.emit(True, "")
+            self.finished_with.emit(True, result)
 
 
 class SettingsDialog(QDialog):
@@ -171,7 +181,7 @@ class SettingsDialog(QDialog):
         self.sf_test_btn.clicked.connect(self._test_salesforce)
         self.sf_status = QLabel("")
         self.sf_status.setWordWrap(True)
-        self._sf_test: _SalesforceConnectionTest | None = None
+        self._sf_test: _SalesforceCall | None = None
         self._sf_client_factory = sf_client.SalesforceClient
         if sf_keyring_problem:
             self._set_sf_status(f"OS-Keyring nicht erreichbar: {sf_keyring_problem}", "error")
@@ -187,6 +197,42 @@ class SettingsDialog(QDialog):
         sf_test_row.addStretch(1)
         sf_form.addRow("", sf_test_row)
         sf_form.addRow("", self.sf_status)
+
+        # Leistende Person: chosen via search, shown by name, stored on "Speichern".
+        self._sf_person: LeistendePerson | None = None
+        self._sf_search: _SalesforceCall | None = None
+        self.sf_person_label = QLabel("")
+        self.sf_person_label.setWordWrap(True)
+        self.sf_person_remove_btn = QPushButton("Entfernen")
+        self.sf_person_remove_btn.setAutoDefault(False)
+        self.sf_person_remove_btn.clicked.connect(lambda: self._set_sf_person(None))
+        self.sf_person_query = QLineEdit()
+        self.sf_person_query.setPlaceholderText("Name oder E-Mail suchen…")
+        self.sf_person_search_btn = QPushButton("Suchen")
+        self.sf_person_search_btn.setAutoDefault(False)
+        self.sf_person_search_btn.clicked.connect(self._search_sf_person)
+        self.sf_person_results = QListWidget()
+        self.sf_person_results.setMaximumHeight(110)
+        self.sf_person_results.setVisible(False)
+        self.sf_person_results.itemClicked.connect(self._choose_sf_person)
+        self.sf_person_results.itemActivated.connect(self._choose_sf_person)
+        self.sf_person_status = QLabel("")
+        self.sf_person_status.setWordWrap(True)
+
+        sf_person_row = QHBoxLayout()
+        sf_person_row.addWidget(self.sf_person_label, 1)
+        sf_person_row.addWidget(self.sf_person_remove_btn)
+        sf_search_row = QHBoxLayout()
+        sf_search_row.addWidget(self.sf_person_query, 1)
+        sf_search_row.addWidget(self.sf_person_search_btn)
+        sf_form.addRow("Leistende Person:", sf_person_row)
+        sf_form.addRow("", sf_search_row)
+        sf_form.addRow("", self.sf_person_results)
+        sf_form.addRow("", self.sf_person_status)
+        for sf_field in (self.sf_instance_url, self.sf_consumer_key, self.sf_consumer_secret):
+            sf_field.textChanged.connect(self._update_sf_person_search_enabled)
+        self._set_sf_person(load_leistende_person(conn))
+        self._update_sf_person_search_enabled()
         sf_hint = QLabel(
             "Anmeldung über die External Client App mit dem gemeinsamen Integrations-User "
             "(Client-Credentials). Das Consumer Secret wird im OS-Keyring gespeichert, nicht in der DB."
@@ -225,6 +271,7 @@ class SettingsDialog(QDialog):
         repo.set_setting(self.conn, SETTINGS_JIRA_EMAIL, self.jira_email.text().strip() or None)
         repo.set_setting(self.conn, SETTINGS_SF_INSTANCE_URL, self.sf_instance_url.text().strip() or None)
         repo.set_setting(self.conn, SETTINGS_SF_CONSUMER_KEY, self.sf_consumer_key.text().strip() or None)
+        save_leistende_person(self.conn, self._sf_person)
 
         new_token = self.jira_token.text()
         if new_token:
@@ -280,27 +327,38 @@ class SettingsDialog(QDialog):
         self.sf_status.setText(text)
         self.sf_status.setStyleSheet(f"color: {color}; font-size: 11px;")
 
-    def _test_salesforce(self) -> None:
-        """Test with what is typed into the dialog right now — saved or not."""
+    def _sf_connection_input(self) -> tuple[sf_client.SalesforceCredentials | None, list[str]]:
+        """What is typed into the dialog right now — saved or not — and what is missing."""
         instance_url = self.sf_instance_url.text().strip()
         consumer_key = self.sf_consumer_key.text().strip()
         secret = self.sf_consumer_secret.text() or self._existing_sf_secret
-        if not (instance_url and consumer_key and secret):
+        missing = [name for name, value in (
+            ("Instance-URL", instance_url), ("Consumer Key", consumer_key), ("Consumer Secret", secret),
+        ) if not value]
+        if missing:
+            return None, missing
+        return sf_client.SalesforceCredentials(instance_url, consumer_key, secret), []
+
+    def _start_sf_call(self, creds: sf_client.SalesforceCredentials, work, on_finished) -> _SalesforceCall:
+        call = _SalesforceCall(creds, self._sf_client_factory, work)
+        call.finished_with.connect(on_finished)
+        call.finished.connect(lambda c=call: _running_salesforce_calls.discard(c))
+        _running_salesforce_calls.add(call)
+        call.start()
+        return call
+
+    def _test_salesforce(self) -> None:
+        creds, _missing = self._sf_connection_input()
+        if creds is None:
             self._set_sf_status("Instance-URL, Consumer Key und Consumer Secret erforderlich.", "error")
             return
         self._set_sf_status("Teste…", "neutral")
         self.sf_test_btn.setEnabled(False)
-        test = _SalesforceConnectionTest(
-            sf_client.SalesforceCredentials(instance_url, consumer_key, secret),
-            self._sf_client_factory,
+        self._sf_test = self._start_sf_call(
+            creds, lambda client: client.test_connection(), self._on_sf_test_finished
         )
-        test.finished_with.connect(self._on_sf_test_finished)
-        test.finished.connect(lambda t=test: _running_connection_tests.discard(t))
-        _running_connection_tests.add(test)
-        self._sf_test = test
-        test.start()
 
-    def _on_sf_test_finished(self, ok: bool, text: str) -> None:
+    def _on_sf_test_finished(self, ok: bool, result) -> None:
         if self.sender() is not self._sf_test:
             return
         self._sf_test = None
@@ -308,13 +366,92 @@ class SettingsDialog(QDialog):
         if ok:
             self._set_sf_status("OK — Anmeldung mit dem Integrations-User erfolgreich.", "ok")
         else:
-            self._set_sf_status(f"Fehler: {text}", "error")
+            self._set_sf_status(f"Fehler: {result}", "error")
+
+    # ---- leistende Person ----
+
+    def _set_sf_person_status(self, text: str, kind: str = "neutral") -> None:
+        color = {"ok": "#15803d", "error": "#b91c1c"}.get(kind, "gray")
+        self.sf_person_status.setText(text)
+        self.sf_person_status.setStyleSheet(f"color: {color}; font-size: 11px;")
+
+    def _set_sf_person(self, person: LeistendePerson | None) -> None:
+        self._sf_person = person
+        self.sf_person_label.setText(person.display_text if person else "(nicht hinterlegt)")
+        self.sf_person_remove_btn.setEnabled(person is not None)
+
+    def _update_sf_person_search_enabled(self) -> None:
+        _creds, missing = self._sf_connection_input()
+        searching = self._sf_search is not None
+        self.sf_person_query.setEnabled(not missing)
+        self.sf_person_search_btn.setEnabled(not missing and not searching)
+        if missing:
+            self.sf_person_results.setVisible(False)
+            self._set_sf_person_status(
+                "Suche nicht möglich, solange die Verbindung unvollständig ist. Es fehlt: "
+                + ", ".join(missing) + "."
+            )
+        elif self.sf_person_status.text().startswith("Suche nicht möglich"):
+            self._set_sf_person_status("")
+
+    def _search_sf_person(self) -> None:
+        creds, _missing = self._sf_connection_input()
+        if creds is None or self._sf_search is not None:
+            return
+        text = self.sf_person_query.text().strip()
+        if not text:
+            self._set_sf_person_status("Bitte Name oder E-Mail eingeben.", "error")
+            return
+        self._set_sf_person_status("Suche…")
+        self._sf_search = self._start_sf_call(
+            creds, lambda client: client.search_active_users(text), self._on_sf_search_finished
+        )
+        self._update_sf_person_search_enabled()
+
+    def _on_sf_search_finished(self, ok: bool, result) -> None:
+        if self.sender() is not self._sf_search:
+            return
+        self._sf_search = None
+        self._update_sf_person_search_enabled()
+        self.sf_person_results.clear()
+        if not ok:
+            self.sf_person_results.setVisible(False)
+            self._set_sf_person_status(f"Fehler: {result}", "error")
+            return
+        for user in result:
+            person = LeistendePerson(id=user.id, name=user.name, email=user.email)
+            item = QListWidgetItem(person.display_text)
+            item.setData(Qt.ItemDataRole.UserRole, person)
+            self.sf_person_results.addItem(item)
+        self.sf_person_results.setVisible(bool(result))
+        if result:
+            self._set_sf_person_status("Person in der Liste anklicken, um sie zu übernehmen.")
+        else:
+            self._set_sf_person_status("Keine aktive Person zu dieser Eingabe gefunden.")
+
+    def _choose_sf_person(self, item: QListWidgetItem) -> None:
+        person = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(person, LeistendePerson):
+            self._set_sf_person(person)
+            self._set_sf_person_status(
+                f"Ausgewählt: {person.display_text} — wird mit „Speichern“ hinterlegt.", "ok"
+            )
+
+    def keyPressEvent(self, event) -> None:
+        # Enter in the search field searches; it must not trigger "Speichern".
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.sf_person_query.hasFocus():
+            self._search_sf_person()
+            return
+        super().keyPressEvent(event)
 
     def done(self, result: int) -> None:
-        # A still-running test may finish after the dialog is gone; it must not call back into us.
+        # A still-running call may finish after the dialog is gone; it must not call back into us.
         if self._sf_test is not None:
             self._sf_test.finished_with.disconnect(self._on_sf_test_finished)
             self._sf_test = None
+        if self._sf_search is not None:
+            self._sf_search.finished_with.disconnect(self._on_sf_search_finished)
+            self._sf_search = None
         super().done(result)
 
     def _apply_autostart(self, enable: bool) -> None:

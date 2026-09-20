@@ -51,6 +51,43 @@ class SalesforceCredentials:
     consumer_secret: str
 
 
+@dataclass(slots=True, frozen=True)
+class ActiveUser:
+    """An active user of the org — a candidate for the leistende Person."""
+
+    id: str
+    name: str
+    email: str = ""
+
+
+_MAX_SEARCH_HITS = 200
+
+# SOQL "Quoted String Escape Sequences": the backslash is the escape character.
+# It must be replaced first, otherwise the backslashes we add would be doubled.
+_SOQL_ESCAPES = (
+    ("\\", "\\\\"),
+    ("'", "\\'"),
+    ('"', '\\"'),
+    ("\n", "\\n"),
+    ("\r", "\\r"),
+    ("\t", "\\t"),
+    ("\b", "\\b"),
+    ("\f", "\\f"),
+)
+
+
+def _escape_soql(text: str) -> str:
+    """Make user input safe inside a single-quoted SOQL string literal."""
+    for char, escaped in _SOQL_ESCAPES:
+        text = text.replace(char, escaped)
+    return text
+
+
+def _escape_like(text: str) -> str:
+    """Like _escape_soql, and the LIKE wildcards _ and % are taken literally."""
+    return _escape_soql(text).replace("_", "\\_").replace("%", "\\%")
+
+
 def _error_body(exc: urllib.error.HTTPError):
     try:
         return json.loads(exc.read().decode("utf-8", errors="replace"))
@@ -99,6 +136,31 @@ class SalesforceClient:
     def test_connection(self) -> None:
         """Sign in and make one authenticated call."""
         self._call("GET", f"/services/data/{API_VERSION}/")
+
+    def search_active_users(self, text: str, limit: int = 20) -> list[ActiveUser]:
+        """Active users whose name or e-mail contains `text`, at most `limit` of them."""
+        text = text.strip()
+        if not text:
+            return []
+        limit = max(1, min(int(limit), _MAX_SEARCH_HITS))
+        pattern = "%" + _escape_like(text) + "%"
+        records = self._query(
+            "SELECT Id, Name, Email FROM User "
+            f"WHERE IsActive = true AND (Name LIKE '{pattern}' OR Email LIKE '{pattern}') "
+            f"ORDER BY Name LIMIT {limit}"
+        )
+        return [
+            ActiveUser(id=str(r["Id"]), name=str(r.get("Name") or ""), email=str(r.get("Email") or ""))
+            for r in records
+        ]
+
+    def _query(self, soql: str) -> list[dict]:
+        """Run one SOQL query (GET .../query?q=...) and return its records."""
+        data = self._call("GET", f"/services/data/{API_VERSION}/query?" + urllib.parse.urlencode({"q": soql}))
+        records = data.get("records") if isinstance(data, dict) else None
+        if not isinstance(records, list):
+            raise SalesforceError("Unerwartete Antwort von Salesforce auf eine Abfrage.")
+        return [r for r in records if isinstance(r, dict)]
 
     def _fetch_token(self) -> str:
         form = urllib.parse.urlencode({
