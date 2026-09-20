@@ -77,6 +77,8 @@ class SalesforceOrgError(SalesforceError):
     The message is the text Salesforce sent, so the user can act on it.
     """
 
+    http_status: Optional[int] = None
+
 
 @dataclass(slots=True)
 class SalesforceCredentials:
@@ -207,7 +209,45 @@ def _org_error_text(exc: urllib.error.HTTPError) -> str:
 
 def _org_error(exc: urllib.error.HTTPError) -> SalesforceOrgError:
     detail = _org_error_text(exc) or str(exc.reason or "")
-    return SalesforceOrgError(f"Salesforce meldet (HTTP {exc.code}): {detail}".rstrip(": "))
+    error = SalesforceOrgError(f"Salesforce meldet (HTTP {exc.code}): {detail}".rstrip(": "))
+    error.http_status = exc.code
+    return error
+
+
+# ---- Kostenposition löschen (Ticket 10, Stornieren): outcomes other than "deleted" ----
+
+class CostItemNotFoundError(SalesforceError):
+    """The Kostenposition does not exist in Salesforce (any more) — e.g. deleted there by hand."""
+
+    def __init__(self) -> None:
+        super().__init__("Die Kostenposition existiert in Salesforce nicht mehr.")
+
+
+class CostItemNotOpenError(SalesforceError):
+    """The Kostenposition is no longer in status Open (e.g. invoiced); it was not deleted."""
+
+    def __init__(self, status: str) -> None:
+        super().__init__(
+            f"Die Kostenposition hat in Salesforce den Status \"{status or 'unbekannt'}\" und nicht mehr "
+            f"\"{COST_ITEM_STATUS_OPEN}\". Sie wurde nicht gelöscht."
+        )
+        self.status = status
+
+
+class CostItemDeleteRefusedError(SalesforceOrgError):
+    """The org refused the DELETE itself (validation rule, trigger, missing permission).
+
+    ANNAHME, in Ticket 03 zu bestätigen: whether and how the org prevents deleting a
+    Kostenposition in another status is unknown, so every 4xx answer to the DELETE
+    counts as a refusal and carries the text Salesforce sent.
+    """
+
+    def __init__(self, org_error: SalesforceOrgError) -> None:
+        super().__init__(f"Salesforce hat das Löschen der Kostenposition abgelehnt; sie wurde nicht gelöscht. {org_error}")
+        self.http_status = org_error.http_status
+
+
+# ---- Ende Löschen-Fehlertypen ----
 
 
 class SalesforceClient:
@@ -345,6 +385,48 @@ class SalesforceClient:
         except SalesforceError:
             return ""
         return str(records[0].get(COST_ITEM_NUMBER_FIELD) or "") if records else ""
+
+    # ---- Kostenposition löschen (Ticket 10, Stornieren) ----
+
+    def delete_cost_item(self, cost_item_id: str) -> None:
+        """Delete the Kostenposition — only while its status is Open. Returns when it is gone.
+
+        Raises CostItemNotFoundError (it does not exist any more), CostItemNotOpenError
+        (status checked BEFORE deleting; the app does not rely on the org refusing),
+        CostItemDeleteRefusedError (the org refused the DELETE, with its text), or the
+        usual SalesforceError for Netz, Anmeldung and other org errors. In every case
+        but the first the Kostenposition still exists.
+
+        ANNAHMEN, in Ticket 03 zu bestätigen: the Integrations-User sees every Kostenposition
+        (a record hidden from him would look "not found"), may delete those in status Open,
+        and a successful DELETE answers 204 without a body.
+        """
+        cost_item_id = cost_item_id.strip()
+        if not _is_salesforce_id(cost_item_id):
+            raise CostItemNotFoundError()   # such a reference cannot exist in Salesforce
+        records = self._query(
+            f"SELECT Id, {COST_ITEM_STATUS_FIELD} FROM {COST_ITEM_OBJECT} "
+            f"WHERE Id = '{_escape_soql(cost_item_id)}' LIMIT 1"
+        )
+        if not records:
+            raise CostItemNotFoundError()
+        status = str(records[0].get(COST_ITEM_STATUS_FIELD) or "")
+        if status != COST_ITEM_STATUS_OPEN:
+            raise CostItemNotOpenError(status)
+        try:
+            self._call(
+                "DELETE",
+                f"/services/data/{API_VERSION}/sobjects/{COST_ITEM_OBJECT}/{urllib.parse.quote(cost_item_id, safe='')}",
+            )
+        except SalesforceOrgError as exc:
+            if exc.http_status == 404:
+                # Deleted by someone else since the check (NOT_FOUND / ENTITY_IS_DELETED).
+                raise CostItemNotFoundError() from exc
+            if exc.http_status is not None and 400 <= exc.http_status < 500:
+                raise CostItemDeleteRefusedError(exc) from exc
+            raise
+
+    # ---- Ende Löschen-Block ----
 
     def _query(self, soql: str) -> list[dict]:
         """Run one SOQL query (GET .../query?q=...) and return all its records.

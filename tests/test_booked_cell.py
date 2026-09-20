@@ -50,8 +50,14 @@ def test_unbooked_entries_of_customers_with_a_booking_system_show_a_dash():
     assert booked_cell_tooltip(_entry(system="salesforce")) == ""
 
 
-def test_cancel_hint_of_a_salesforce_booking_does_not_talk_about_jira():
-    """Until Stornieren deletes the Kostenposition (Ticket 10), the hint must say that it stays."""
+def test_cancel_hint_of_a_salesforce_booking_names_the_number_and_says_it_is_deleted():
     hint = cancel_booking_hint(_entry(system="salesforce", worklog_id=_SF_ID, number="PCI-00042", url=_SF_URL))
     assert "Jira" not in hint
-    assert "Kostenposition PCI-00042 bleibt in Salesforce bestehen" in hint
+    assert "Kostenposition PCI-00042 wird in Salesforce gelöscht" in hint
+    assert _SF_ID not in hint
+
+
+def test_cancel_hint_of_a_salesforce_booking_without_a_number_shows_no_id():
+    hint = cancel_booking_hint(_entry(system="salesforce", worklog_id=_SF_ID, url=_SF_URL))
+    assert "Die Kostenposition wird in Salesforce gelöscht" in hint
+    assert _SF_ID not in hint

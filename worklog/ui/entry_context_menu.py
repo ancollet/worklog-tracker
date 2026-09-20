@@ -71,6 +71,10 @@ def cancel_entry_booking(parent: QWidget, conn: sqlite3.Connection, log_id: int)
     log = repo.get_log(conn, log_id)
     if log is None or not log.is_booked:
         return False
+    if log.customer_booking_system == "salesforce":
+        # The Kostenposition is deleted in Salesforce first — in the background, with its own messages.
+        from worklog.ui.salesforce_cancel import cancel_salesforce_booking
+        return cancel_salesforce_booking(parent, conn, log_id)
     confirm = QMessageBox.question(
         parent, "Buchung stornieren?", f"{cancel_booking_hint(log)} Fortfahren?"
     )
