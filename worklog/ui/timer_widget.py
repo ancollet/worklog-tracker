@@ -27,6 +27,12 @@ from PyQt6.QtWidgets import (
 from worklog import repository as repo
 from worklog.models import LogEntry
 from worklog.services.entry_menu import target_log_ids
+from worklog.services.move import (
+    MoveRejectedError,
+    drop_changes_anything,
+    drop_target_day,
+    move_entries_to_date,
+)
 from worklog.services.rounding import format_hm_short, format_hms
 from worklog.services.timer import AlreadyRunningError, TimerService, manual_log
 from worklog.ui.completers import (
@@ -36,6 +42,7 @@ from worklog.ui.completers import (
     refresh_task_completer,
 )
 from worklog.ui.entry_context_menu import build_entry_context_menu, keep_selection_on_right_click
+from worklog.ui.move_dialog import show_move_rejected
 from worklog.ui.snippet_button import with_snippet_button
 
 CLOCKWORK_URL = (
@@ -119,10 +126,19 @@ def _make_project_chip_widget(log: LogEntry) -> QWidget:
 
 
 class RecentTree(QTreeWidget):
-    """Recent log entries grouped Month → Day → Entry, with Tags column (chips)."""
+    """Recent log entries grouped Month → Day → Entry, with Tags column (chips).
+
+    Drag & Drop: Eintragszeilen can be dragged onto a Tageszeile or an
+    Eintragszeile (target = that row's day). Qt never re-parents items; a drop
+    calls the Verschieben operation and the tree is rebuilt from the database.
+    """
 
     edit_requested = pyqtSignal(int)
-    changed = pyqtSignal()  # a context-menu action changed data
+    changed = pyqtSignal()  # a context-menu action or a drop changed data
+
+    ROLE_LOG_ID = Qt.ItemDataRole.UserRole  # Eintragszeile only
+    ROLE_DAY = Qt.ItemDataRole.UserRole + 1  # ISO date; Tageszeile and Eintragszeile
+    ROLE_MONTH = Qt.ItemDataRole.UserRole + 2  # "YYYY-MM"; Monatszeile only
 
     COLUMNS = ["Zeit", "Dauer", "Task", "Beschreibung", "Kunde", "Tags"]
     COL_TIME, COL_DURATION, COL_TASK, COL_DESC, COL_CUSTOMER, COL_TAGS = range(6)
@@ -146,8 +162,16 @@ class RecentTree(QTreeWidget):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
         keep_selection_on_right_click(self)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.setDragDropOverwriteMode(True)  # drop *on* a row, never between rows
+        self.setDropIndicatorShown(True)
 
     def populate(self, logs: list[LogEntry]) -> None:
+        collapsed = self._collapsed_keys()
+        scroll = self.verticalScrollBar().value()
         self.clear()
 
         months: "OrderedDict[tuple[int, int], OrderedDict[date, list[LogEntry]]]" = OrderedDict()
@@ -168,24 +192,31 @@ class RecentTree(QTreeWidget):
             )
             month_row = [month_label, format_hm_short(month_total)] + [""] * (len(self.COLUMNS) - 2)
             month_item = QTreeWidgetItem(month_row)
+            month_key = f"{year:04d}-{month:02d}"
+            month_item.setData(0, self.ROLE_MONTH, month_key)
+            month_item.setFlags(
+                month_item.flags() & ~(Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
+            )
             for col in range(len(self.COLUMNS)):
                 month_item.setBackground(col, QColor("#E5E7EB"))
                 month_item.setFont(col, bold)
             self.addTopLevelItem(month_item)
-            month_item.setExpanded(True)
+            month_item.setExpanded(month_key not in collapsed)
 
             for d, day_logs in days.items():
                 day_label = f"{WEEKDAY_NAMES_DE[d.weekday()]}, {d.strftime('%d.%m.%Y')}"
                 day_total = sum((log.duration_seconds or 0) for log in day_logs)
                 day_row = [day_label, format_hm_short(day_total)] + [""] * (len(self.COLUMNS) - 2)
                 day_item = QTreeWidgetItem(day_row)
+                day_item.setData(0, self.ROLE_DAY, d.isoformat())
+                day_item.setFlags(day_item.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
                 italic = QFont()
                 italic.setItalic(True)
                 for col in range(len(self.COLUMNS)):
                     day_item.setBackground(col, QColor("#F3F4F6"))
                     day_item.setFont(col, italic)
                 month_item.addChild(day_item)
-                day_item.setExpanded(True)
+                day_item.setExpanded(d.isoformat() not in collapsed)
 
                 for log in day_logs:
                     leaf = self._build_leaf(log)
@@ -194,6 +225,22 @@ class RecentTree(QTreeWidget):
                     flags_widget = _make_flags_widget(log)
                     if flags_widget is not None:
                         self.setItemWidget(leaf, self.COL_TAGS, flags_widget)
+
+        self.executeDelayedItemsLayout()  # scroll range is known only after the layout
+        self.verticalScrollBar().setValue(scroll)
+
+    def _collapsed_keys(self) -> set[str]:
+        """Months ("YYYY-MM") and days (ISO date) the user has folded."""
+        keys: set[str] = set()
+        for i in range(self.topLevelItemCount()):
+            month_item = self.topLevelItem(i)
+            if not month_item.isExpanded():
+                keys.add(month_item.data(0, self.ROLE_MONTH))
+            for j in range(month_item.childCount()):
+                day_item = month_item.child(j)
+                if not day_item.isExpanded():
+                    keys.add(day_item.data(0, self.ROLE_DAY))
+        return keys
 
     def _build_leaf(self, log: LogEntry) -> QTreeWidgetItem:
         time_str = "—"
@@ -207,6 +254,9 @@ class RecentTree(QTreeWidget):
             [time_str, duration, log.task or "", log.description or "", "", ""]
         )
         leaf.setData(0, Qt.ItemDataRole.UserRole, int(log.id))
+        leaf.setData(0, self.ROLE_DAY, log.started_at.date().isoformat())
+        if log.ended_at is None:  # a laufender Eintrag stays on its day
+            leaf.setFlags(leaf.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
         leaf.setToolTip(self.COL_DESC, log.description or "")
         leaf.setTextAlignment(
             self.COL_DURATION, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -250,6 +300,66 @@ class RecentTree(QTreeWidget):
         )
         menu.exec(self.viewport().mapToGlobal(pos))
         menu.deleteLater()
+
+    # ------------------ Drag & Drop ------------------
+
+    def _dragged_items(self) -> list[QTreeWidgetItem]:
+        """The selected Eintragszeilen; a selected laufender Eintrag counts too,
+        so that the Verschieben operation can refuse the whole drop."""
+        return [
+            item for item in self.selectedItems()
+            if item.data(0, self.ROLE_LOG_ID) is not None
+        ]
+
+    def _drop_day(self, event) -> Optional[date]:
+        """The day this drag would be dropped on, or None when it is no drop target."""
+        if event.source() is not self:
+            return None
+        item = self.itemAt(event.position().toPoint())
+        row_day = item.data(0, self.ROLE_DAY) if item is not None else None
+        return drop_target_day(
+            date.fromisoformat(row_day) if row_day else None,
+            [date.fromisoformat(i.data(0, self.ROLE_DAY)) for i in self._dragged_items()],
+        )
+
+    def dragEnterEvent(self, event) -> None:
+        if event.source() is self:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        super().dragMoveEvent(event)  # auto-scroll and drop indicator
+        if self._drop_day(event) is None:
+            event.ignore()  # Monatszeile / empty area: "forbidden" cursor
+        else:
+            event.setDropAction(Qt.DropAction.MoveAction)
+            event.accept()
+
+    def dropEvent(self, event) -> None:
+        # Never call super(): Qt must not re-parent or remove any item.
+        target = self._drop_day(event)
+        if target is None:
+            event.ignore()
+            return
+        log_ids = self._selected_log_ids()
+        days = [date.fromisoformat(i.data(0, self.ROLE_DAY)) for i in self._dragged_items()]
+        # IgnoreAction keeps Qt from removing the dragged rows after a "move".
+        event.setDropAction(Qt.DropAction.IgnoreAction)
+        event.accept()
+        self.setState(QAbstractItemView.State.NoState)
+        self.viewport().update()
+        if drop_changes_anything(target, days):
+            # After the drag has ended: the tree is rebuilt and a message may pop up.
+            QTimer.singleShot(0, lambda: self._move_dropped(log_ids, target))
+
+    def _move_dropped(self, log_ids: list[int], target: date) -> None:
+        try:
+            move_entries_to_date(self.conn, log_ids, target)
+        except MoveRejectedError as exc:
+            show_move_rejected(self, exc)
+            return
+        self.changed.emit()
 
 
 class RunningList(QTreeWidget):

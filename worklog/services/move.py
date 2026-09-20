@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date, datetime, timedelta
+from typing import Optional
 
 from worklog import repository as repo
 from worklog.models import LogEntry
@@ -84,3 +85,19 @@ def move_entries_to_date(conn: sqlite3.Connection, log_ids: list[int], target: d
         conn.execute("ROLLBACK")
         raise
     conn.execute("COMMIT")
+
+
+def drop_target_day(row_day: Optional[date], dragged_days: list[date]) -> Optional[date]:
+    """Drag & Drop im Baum: the day a drop on a row means, or None for "no drop here".
+
+    `row_day` is the day of the row under the cursor: a Tageszeile and an
+    Eintragszeile carry their day, a Monatszeile and the empty area carry none.
+    """
+    if row_day is None or not dragged_days:
+        return None
+    return row_day
+
+
+def drop_changes_anything(target: date, dragged_days: list[date]) -> bool:
+    """False for a drop on the own day: accepted, but nothing is moved."""
+    return any(day != target for day in dragged_days)
