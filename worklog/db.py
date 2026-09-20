@@ -9,7 +9,7 @@ from typing import Iterator
 
 from worklog.paths import db_path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7  # 6 = Snippets, 7 = Salesforce-Account registrieren
 
 INITIAL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -151,6 +151,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "VALUES (1, NULL, NULL, 15)"
         )
         _create_snippet_table(conn)
+        _migrate_to_7_salesforce_account(conn)
     elif current < SCHEMA_VERSION:
         if current < 3:
             # v2 introduced auto-seeded flags; v3 removes them again. Drop the
@@ -178,6 +179,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
                     conn.execute(f"ALTER TABLE log_entry ADD COLUMN {col} TEXT")
         if current < 6:
             _create_snippet_table(conn)
+        if current < 7:
+            _migrate_to_7_salesforce_account(conn)
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
 
@@ -190,3 +193,43 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     except Exception:
         conn.execute("ROLLBACK")
         raise
+
+
+# ---------- Schritt "→ 7": Salesforce-Account registrieren ----------
+
+def _migrate_to_7_salesforce_account(conn: sqlite3.Connection) -> None:
+    """Eine Account-ID darf nur an einem Kunden hängen (leere Werte ausgenommen).
+
+    Idempotent and independent of every other step; runs for fresh databases too,
+    because the index cannot live in INITIAL_SCHEMA (older databases get the
+    columns it needs only during migration). Only Salesforce-Kunden are covered:
+    for Jira-Kunden the external reference is a project key, not an Account-ID.
+
+    Hand-typed duplicates from before: the oldest Kunde keeps the Account, the
+    others stay (with Projekte and Einträge) but lose the Account-ID and can be
+    connected again in the Kunden-Tab.
+
+    `external_name` holds the name of the connected Account, so the UI can show
+    it instead of the ID even after the Kunde was renamed.
+    """
+    if not _has_column(conn, "customer", "external_name"):
+        conn.execute("ALTER TABLE customer ADD COLUMN external_name TEXT")
+    conn.execute(
+        """
+        UPDATE customer SET external_ref = NULL
+        WHERE booking_system = 'salesforce' AND external_ref IS NOT NULL AND external_ref <> ''
+          AND EXISTS (
+              SELECT 1 FROM customer older
+              WHERE older.booking_system = 'salesforce'
+                AND older.external_ref = customer.external_ref
+                AND older.id < customer.id
+          )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_salesforce_account
+        ON customer(external_ref)
+        WHERE booking_system = 'salesforce' AND external_ref IS NOT NULL AND external_ref <> ''
+        """
+    )

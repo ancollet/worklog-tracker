@@ -8,13 +8,20 @@ Spec: `.scratch/salesforce-buchen/spec.md` (Stories 9–13, 20, 23). Begriff: "R
 
 **Status:** ready-for-agent
 
-- [ ] Der Salesforce-Client listet Accounts mit mindestens einem offenen Projekt (ID, Name). Objekt-, Feld- und Statusnamen sind bis zur Klärung in Ticket 03 als klar benannte Annahmen an einer Stelle im Client hinterlegt.
-- [ ] Auswahldialog im Kunden-Tab mit Namensfilter; lädt im Hintergrund, zeigt Ladezustand und Fehler verständlich an.
-- [ ] Registrieren legt einen Kunden mit Namen des Accounts, Buchungssystem Salesforce und der Account-ID als externer Referenz an.
-- [ ] Bereits registrierte Accounts sind in der Liste markiert und nicht erneut registrierbar.
-- [ ] Eine Account-ID kann nur an einem Kunden hängen (leere Werte ausgenommen); das ist auf Datenebene durchgesetzt, inkl. Migration bestehender Datenbanken.
-- [ ] Ein bestehender Kunde lässt sich über "Verbinden…/Ändern…" mit einem Account verbinden; dabei wird sein Buchungssystem auf Salesforce gesetzt, Projekte und Einträge bleiben erhalten.
-- [ ] Bei Salesforce-Kunden ist das freie Textfeld für die externe Referenz durch die Anzeige des verbundenen Accounts ersetzt; bei Jira-Kunden und Kunden ohne Buchungssystem bleibt alles wie heute.
+- [x] Der Salesforce-Client listet Accounts mit mindestens einem offenen Projekt (ID, Name). Objekt-, Feld- und Statusnamen sind bis zur Klärung in Ticket 03 als klar benannte Annahmen an einer Stelle im Client hinterlegt.
+- [x] Auswahldialog im Kunden-Tab mit Namensfilter; lädt im Hintergrund, zeigt Ladezustand und Fehler verständlich an.
+- [x] Registrieren legt einen Kunden mit Namen des Accounts, Buchungssystem Salesforce und der Account-ID als externer Referenz an.
+- [x] Bereits registrierte Accounts sind in der Liste markiert und nicht erneut registrierbar.
+- [x] Eine Account-ID kann nur an einem Kunden hängen (leere Werte ausgenommen); das ist auf Datenebene durchgesetzt, inkl. Migration bestehender Datenbanken.
+- [x] Ein bestehender Kunde lässt sich über "Verbinden…/Ändern…" mit einem Account verbinden; dabei wird sein Buchungssystem auf Salesforce gesetzt, Projekte und Einträge bleiben erhalten.
+- [x] Bei Salesforce-Kunden ist das freie Textfeld für die externe Referenz durch die Anzeige des verbundenen Accounts ersetzt; bei Jira-Kunden und Kunden ohne Buchungssystem bleibt alles wie heute.
 - [ ] Salesforce-IDs sind nirgends in der UI sichtbar oder einzutippen.
-- [ ] Ohne Verbindung ist die Funktion deaktiviert bzw. meldet den Fehler; der Kunden-Tab selbst funktioniert offline unverändert.
-- [ ] Tests: Client-Abfrage mit gefälschtem HTTP (Treffer, leer, Fehler); Registrieren legt den Kunden korrekt an; Doppelregistrierung abgelehnt; nachträgliches Verbinden erhält Projekte und Einträge; Migration.
+- [x] Ohne Verbindung ist die Funktion deaktiviert bzw. meldet den Fehler; der Kunden-Tab selbst funktioniert offline unverändert.
+- [x] Tests: Client-Abfrage mit gefälschtem HTTP (Treffer, leer, Fehler); Registrieren legt den Kunden korrekt an; Doppelregistrierung abgelehnt; nachträgliches Verbinden erhält Projekte und Einträge; Migration.
+
+## Comments
+
+- Umsetzung Ticket 04: Alle Kriterien bis auf "Salesforce-IDs sind nirgends in der UI sichtbar" abgehakt. Für den Account ist es erfüllt und per Offscreen-Smoke-Test geprüft (Baumspalte, Kunden-Details und Auswahldialog zeigen nur Namen; das Freitextfeld wird bei Salesforce-Kunden nie mit der ID gefüllt). Offen bleibt bis Ticket 05 die externe Referenz von *Projekten* eines Salesforce-Kunden (Freitextfeld "Salesforce Projekt-ID" und Baumspalte) — das ist dort ein eigenes Kriterium.
+- Org-Namen (`Project__c`, `Account__c`, `Status__c`, offen = `Open`) sind Annahmen, als Konstanten oben in `worklog/services/salesforce.py`; in Ticket 03 gegen die Sandbox zu bestätigen.
+- Schema-Schritt "→ 7" (unabhängig von Schritt 6/Snippets): partieller Unique-Index auf der Account-ID von Salesforce-Kunden plus Spalte `customer.external_name` (Name des verbundenen Accounts für die Anzeige). Von Hand doppelt eingetragene Account-IDs: der älteste Kunde behält den Account, die übrigen bleiben mit Projekten und Einträgen erhalten, verlieren aber die ID.
+- Die UI ist nicht gegen eine echte Org abgenommen (Ticket 11).

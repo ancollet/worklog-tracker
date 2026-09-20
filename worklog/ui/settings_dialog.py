@@ -4,7 +4,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -33,6 +33,7 @@ from worklog.services.salesforce_settings import (
     load_leistende_person,
     save_leistende_person,
 )
+from worklog.ui.salesforce_call import SalesforceCall, start_salesforce_call
 from worklog.ui.theme import DEFAULT_UI_THEME, SETTINGS_UI_THEME, THEMES, apply_theme
 
 ROUNDING_CHOICES = [
@@ -46,36 +47,6 @@ ROUNDING_CHOICES = [
 
 SETTINGS_JIRA_BASE_URL = "jira.base_url"
 SETTINGS_JIRA_EMAIL = "jira.email"
-
-# Salesforce calls that outlive their dialog are parked here until they finish,
-# so a running QThread is never garbage-collected.
-_running_salesforce_calls: set = set()
-
-
-class _SalesforceCall(QThread):
-    """Runs one call to Salesforce off the UI thread.
-
-    `work` gets the client and returns the result. Emits (True, result) or
-    (False, error text).
-    """
-
-    finished_with = pyqtSignal(bool, object)
-
-    def __init__(self, creds: sf_client.SalesforceCredentials, client_factory, work) -> None:
-        super().__init__()
-        self._creds = creds
-        self._client_factory = client_factory
-        self._work = work
-
-    def run(self) -> None:
-        try:
-            result = self._work(self._client_factory(self._creds))
-        except sf_client.SalesforceError as exc:
-            self.finished_with.emit(False, str(exc))
-        except Exception as exc:  # never let a worker thread die silently
-            self.finished_with.emit(False, f"Unerwarteter Fehler: {exc}")
-        else:
-            self.finished_with.emit(True, result)
 
 
 class SettingsDialog(QDialog):
@@ -181,7 +152,7 @@ class SettingsDialog(QDialog):
         self.sf_test_btn.clicked.connect(self._test_salesforce)
         self.sf_status = QLabel("")
         self.sf_status.setWordWrap(True)
-        self._sf_test: _SalesforceCall | None = None
+        self._sf_test: SalesforceCall | None = None
         self._sf_client_factory = sf_client.SalesforceClient
         if sf_keyring_problem:
             self._set_sf_status(f"OS-Keyring nicht erreichbar: {sf_keyring_problem}", "error")
@@ -200,7 +171,7 @@ class SettingsDialog(QDialog):
 
         # Leistende Person: chosen via search, shown by name, stored on "Speichern".
         self._sf_person: LeistendePerson | None = None
-        self._sf_search: _SalesforceCall | None = None
+        self._sf_search: SalesforceCall | None = None
         self.sf_person_label = QLabel("")
         self.sf_person_label.setWordWrap(True)
         self.sf_person_remove_btn = QPushButton("Entfernen")
@@ -339,13 +310,8 @@ class SettingsDialog(QDialog):
             return None, missing
         return sf_client.SalesforceCredentials(instance_url, consumer_key, secret), []
 
-    def _start_sf_call(self, creds: sf_client.SalesforceCredentials, work, on_finished) -> _SalesforceCall:
-        call = _SalesforceCall(creds, self._sf_client_factory, work)
-        call.finished_with.connect(on_finished)
-        call.finished.connect(lambda c=call: _running_salesforce_calls.discard(c))
-        _running_salesforce_calls.add(call)
-        call.start()
-        return call
+    def _start_sf_call(self, creds: sf_client.SalesforceCredentials, work, on_finished) -> SalesforceCall:
+        return start_salesforce_call(creds, self._sf_client_factory, work, on_finished)
 
     def _test_salesforce(self) -> None:
         creds, _missing = self._sf_connection_input()

@@ -21,6 +21,14 @@ from typing import Optional
 
 API_VERSION = "v64.0"
 
+# ---- Org-Namen des Salesforce-Projekts: ANNAHMEN, in Ticket 03 gegen die Sandbox zu bestätigen ----
+# (spec.md, offener Recherchepunkt 2). Nothing else in the app knows these names;
+# correcting them means changing exactly these lines.
+PROJECT_OBJECT = "Project__c"                # API name of the Salesforce-Projekt object
+PROJECT_ACCOUNT_FIELD = "Account__c"         # lookup from the Projekt to its Account
+PROJECT_STATUS_FIELD = "Status__c"           # status picklist on the Projekt
+PROJECT_OPEN_STATUSES = ("Open",)            # status values that mean "offen"
+
 _TOKEN_PATH = "/services/oauth2/token"
 _TIMEOUT_SECONDS = 15
 
@@ -60,7 +68,16 @@ class ActiveUser:
     email: str = ""
 
 
+@dataclass(slots=True, frozen=True)
+class SalesforceAccount:
+    """An Account of the org that can be registriert as a Kunde."""
+
+    id: str
+    name: str
+
+
 _MAX_SEARCH_HITS = 200
+_MAX_QUERY_BATCHES = 50   # safety net against an endless "nextRecordsUrl" chain
 
 # SOQL "Quoted String Escape Sequences": the backslash is the escape character.
 # It must be replaced first, otherwise the backslashes we add would be doubled.
@@ -86,6 +103,12 @@ def _escape_soql(text: str) -> str:
 def _escape_like(text: str) -> str:
     """Like _escape_soql, and the LIKE wildcards _ and % are taken literally."""
     return _escape_soql(text).replace("_", "\\_").replace("%", "\\%")
+
+
+def _open_project_condition() -> str:
+    """SOQL condition "this Salesforce-Projekt is offen"."""
+    values = ", ".join(f"'{_escape_soql(v)}'" for v in PROJECT_OPEN_STATUSES)
+    return f"{PROJECT_STATUS_FIELD} IN ({values})"
 
 
 def _error_body(exc: urllib.error.HTTPError):
@@ -154,13 +177,35 @@ class SalesforceClient:
             for r in records
         ]
 
+    def list_accounts_with_open_projects(self) -> list[SalesforceAccount]:
+        """All Accounts that have at least one offenes Projekt, sorted by name."""
+        records = self._query(
+            "SELECT Id, Name FROM Account "
+            f"WHERE Id IN (SELECT {PROJECT_ACCOUNT_FIELD} FROM {PROJECT_OBJECT} "
+            f"WHERE {_open_project_condition()}) "
+            "ORDER BY Name"
+        )
+        return [SalesforceAccount(id=str(r["Id"]), name=str(r.get("Name") or "")) for r in records]
+
     def _query(self, soql: str) -> list[dict]:
-        """Run one SOQL query (GET .../query?q=...) and return its records."""
-        data = self._call("GET", f"/services/data/{API_VERSION}/query?" + urllib.parse.urlencode({"q": soql}))
-        records = data.get("records") if isinstance(data, dict) else None
-        if not isinstance(records, list):
-            raise SalesforceError("Unerwartete Antwort von Salesforce auf eine Abfrage.")
-        return [r for r in records if isinstance(r, dict)]
+        """Run one SOQL query (GET .../query?q=...) and return all its records.
+
+        Salesforce answers in batches; while "done" is false, "nextRecordsUrl"
+        (a path on the same instance) leads to the next one.
+        """
+        path = f"/services/data/{API_VERSION}/query?" + urllib.parse.urlencode({"q": soql})
+        result: list[dict] = []
+        for _batch in range(_MAX_QUERY_BATCHES):
+            data = self._call("GET", path)
+            records = data.get("records") if isinstance(data, dict) else None
+            if not isinstance(records, list):
+                raise SalesforceError("Unerwartete Antwort von Salesforce auf eine Abfrage.")
+            result.extend(r for r in records if isinstance(r, dict))
+            next_path = data.get("nextRecordsUrl")
+            if data.get("done", True) or not isinstance(next_path, str) or not next_path.startswith("/"):
+                break
+            path = next_path
+        return result
 
     def _fetch_token(self) -> str:
         form = urllib.parse.urlencode({

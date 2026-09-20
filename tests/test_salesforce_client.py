@@ -366,3 +366,77 @@ def test_unexpected_query_answer_is_a_readable_error():
 
     with pytest.raises(sf.SalesforceError):
         sf.SalesforceClient(_creds(), opener=transport).search_active_users("anna")
+
+
+# ---------- Accounts mit offenen Projekten (Registrieren) ----------
+
+
+def test_accounts_with_open_projects_returns_id_and_name():
+    transport = _FakeTransport(_token(), _query_result(
+        {"Id": "001AA000001AAAAIA2", "Name": "Acme GmbH"},
+        {"Id": "001AA000001BBBBIA2", "Name": "Beta AG"},
+    ))
+
+    accounts = sf.SalesforceClient(_creds(), opener=transport).list_accounts_with_open_projects()
+
+    assert accounts == [
+        sf.SalesforceAccount(id="001AA000001AAAAIA2", name="Acme GmbH"),
+        sf.SalesforceAccount(id="001AA000001BBBBIA2", name="Beta AG"),
+    ]
+
+
+def test_accounts_query_asks_only_for_accounts_with_an_open_project():
+    transport = _FakeTransport(_token(), _query_result())
+
+    sf.SalesforceClient(_creds(), opener=transport).list_accounts_with_open_projects()
+
+    soql = _soql(transport.requests[1])
+    assert soql.startswith("SELECT Id, Name FROM Account WHERE Id IN (SELECT ")
+    # the org names are assumptions kept in one place; the query must be built from them
+    assert f"SELECT {sf.PROJECT_ACCOUNT_FIELD} FROM {sf.PROJECT_OBJECT} " in soql
+    assert f"WHERE {sf.PROJECT_STATUS_FIELD} IN ('{sf.PROJECT_OPEN_STATUSES[0]}'" in soql
+    assert soql.endswith("ORDER BY Name")
+
+
+def test_no_account_with_open_projects_returns_an_empty_list():
+    transport = _FakeTransport(_token(), _query_result())
+
+    assert sf.SalesforceClient(_creds(), opener=transport).list_accounts_with_open_projects() == []
+
+
+def test_accounts_beyond_the_first_batch_are_fetched_too():
+    first = _FakeResponse({
+        "totalSize": 2, "done": False,
+        "nextRecordsUrl": f"/services/data/{sf.API_VERSION}/query/01gAA000000001-2000",
+        "records": [{"Id": "001AA000001AAAAIA2", "Name": "Acme GmbH"}],
+    })
+    transport = _FakeTransport(_token(), first, _query_result(
+        {"Id": "001AA000001BBBBIA2", "Name": "Beta AG"},
+    ))
+
+    accounts = sf.SalesforceClient(_creds(), opener=transport).list_accounts_with_open_projects()
+
+    assert [a.name for a in accounts] == ["Acme GmbH", "Beta AG"]
+    follow_up = transport.requests[2]
+    assert follow_up.full_url == (
+        f"https://acme.my.salesforce.com/services/data/{sf.API_VERSION}/query/01gAA000000001-2000"
+    )
+    assert _headers(follow_up)["authorization"] == "Bearer tok-1"
+
+
+def test_network_error_while_listing_accounts_raises_network_error():
+    transport = _FakeTransport(_token(), urllib.error.URLError("Network is unreachable"))
+
+    with pytest.raises(sf.SalesforceNetworkError):
+        sf.SalesforceClient(_creds(), opener=transport).list_accounts_with_open_projects()
+
+
+def test_org_error_while_listing_accounts_carries_the_salesforce_text():
+    transport = _FakeTransport(_token(), _http_error(400, [
+        {"message": "sObject type 'Project__c' is not supported.", "errorCode": "INVALID_TYPE"},
+    ]))
+
+    with pytest.raises(sf.SalesforceOrgError) as excinfo:
+        sf.SalesforceClient(_creds(), opener=transport).list_accounts_with_open_projects()
+
+    assert "is not supported" in str(excinfo.value)

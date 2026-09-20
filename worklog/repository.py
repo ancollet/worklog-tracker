@@ -27,6 +27,7 @@ def _row_to_customer(row: sqlite3.Row) -> Customer:
         external_ref=row["external_ref"] if "external_ref" in keys else None,
         archived=bool(row["archived"]),
         created_at=_parse_dt(row["created_at"]),
+        external_name=row["external_name"] if "external_name" in keys else None,
     )
 
 
@@ -118,6 +119,23 @@ def update_customer(
 def delete_customer(conn: sqlite3.Connection, customer_id: int) -> None:
     """Hard delete. Cascades to projects; logs lose project FK reference (we don't allow this if logs exist)."""
     conn.execute("DELETE FROM customer WHERE id = ?", (customer_id,))
+
+
+def set_customer_salesforce_account(
+    conn: sqlite3.Connection,
+    customer_id: int,
+    *,
+    account_id: str,
+    account_name: str,
+) -> None:
+    """Connect the Kunde with a Salesforce-Account; sets the Buchungssystem to Salesforce.
+
+    Raises sqlite3.IntegrityError if the Account-ID already hangs on another Kunde.
+    """
+    conn.execute(
+        "UPDATE customer SET booking_system = 'salesforce', external_ref = ?, external_name = ? WHERE id = ?",
+        (account_id, account_name or None, customer_id),
+    )
 
 
 # ---------- Projects ----------
