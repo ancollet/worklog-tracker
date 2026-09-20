@@ -41,7 +41,7 @@ def test_single_entry_can_be_edited_and_deleted():
     assert plan.header == "1 Eintrag ausgewählt"
     assert plan.can_edit is True
     assert plan.delete_label == "⌫  Löschen"
-    assert plan.jira_action is None
+    assert plan.booking_system is None
 
 
 def test_multiple_entries_disable_edit_and_offer_bulk_delete():
@@ -53,13 +53,14 @@ def test_multiple_entries_disable_edit_and_offer_bulk_delete():
 
 def test_unbooked_entry_of_jira_customer_offers_booking():
     plan = plan_entry_menu([_entry(1, booking_system="jira")])
-    assert plan.jira_action == "book"
+    assert plan.booking_system == "jira"
+    assert plan.booking_disabled_reason is None
 
 
 def test_booked_entry_offers_buchung_stornieren_instead_of_booking():
     plan = plan_entry_menu([_entry(1, booking_system="jira", worklog_id="4711")])
     assert plan.can_cancel_booking is True
-    assert plan.jira_action is None
+    assert plan.booking_system is None
 
 
 def test_buchung_stornieren_for_every_booked_entry_whatever_the_booking_system():
@@ -104,7 +105,64 @@ def test_mixed_selection_is_locked_as_a_whole_with_the_count():
 
 def test_jira_actions_only_for_exactly_one_entry():
     logs = [_entry(1, booking_system="jira"), _entry(2, booking_system="jira")]
-    assert plan_entry_menu(logs).jira_action is None
+    assert plan_entry_menu(logs).booking_system is None
+
+
+# ---------- "In Salesforce buchen…" ----------
+
+def test_unbooked_entry_of_salesforce_customer_offers_salesforce_booking():
+    plan = plan_entry_menu([_entry(1, booking_system="salesforce")], salesforce_block=lambda log: None)
+    assert plan.booking_system == "salesforce"
+    assert plan.booking_disabled_reason is None
+
+
+def test_entry_without_booking_system_offers_no_booking():
+    assert plan_entry_menu([_entry(1)], salesforce_block=lambda log: None).booking_system is None
+
+
+def test_salesforce_booking_is_shown_but_disabled_with_the_reason_of_the_booking_service():
+    asked = []
+
+    def block(log):
+        asked.append(log.id)
+        return "Salesforce ist nicht vollständig eingerichtet. Es fehlt: Leistende Person."
+
+    plan = plan_entry_menu([_entry(7, booking_system="salesforce")], salesforce_block=block)
+
+    assert plan.booking_system == "salesforce"
+    assert plan.booking_disabled_reason == (
+        "Salesforce ist nicht vollständig eingerichtet. Es fehlt: Leistende Person."
+    )
+    assert asked == [7]
+
+
+def test_booked_salesforce_entry_shows_disabled_booking_next_to_buchung_stornieren():
+    plan = plan_entry_menu(
+        [_entry(1, booking_system="salesforce", worklog_id="a0B1")],
+        salesforce_block=lambda log: "Eintrag ist bereits gebucht.",
+    )
+    assert plan.booking_system == "salesforce"
+    assert plan.booking_disabled_reason == "Eintrag ist bereits gebucht."
+    assert plan.can_cancel_booking is True
+
+
+def test_salesforce_booking_is_active_for_exactly_one_entry_only():
+    logs = [_entry(1, booking_system="salesforce"), _entry(2, booking_system="salesforce")]
+    plan = plan_entry_menu(logs, salesforce_block=lambda log: None)
+    assert plan.booking_system == "salesforce"
+    assert plan.booking_disabled_reason == "Bitte genau einen Eintrag auswählen."
+
+
+def test_single_booked_entry_with_a_link_offers_to_open_its_booking():
+    booked = replace(_entry(1, booking_system="salesforce", worklog_id="a0B1"), external_worklog_url="https://x/a0B1")
+    assert plan_entry_menu([booked]).booking_url == "https://x/a0B1"
+    assert plan_entry_menu([booked, _entry(2)]).booking_url is None
+    assert plan_entry_menu([_entry(2)]).booking_url is None
+
+
+def test_mixed_selection_of_jira_and_salesforce_customers_offers_no_booking():
+    logs = [_entry(1, booking_system="salesforce"), _entry(2, booking_system="jira")]
+    assert plan_entry_menu(logs, salesforce_block=lambda log: None).booking_system is None
 
 
 # ---------- Fortsetzen ----------

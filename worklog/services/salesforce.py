@@ -17,6 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from datetime import date
 from typing import Optional
 
 API_VERSION = "v64.0"
@@ -29,6 +30,30 @@ PROJECT_NAME_FIELD = "Name"                  # display name of the Projekt
 PROJECT_ACCOUNT_FIELD = "Account__c"         # lookup from the Projekt to its Account
 PROJECT_STATUS_FIELD = "Status__c"           # status picklist on the Projekt
 PROJECT_OPEN_STATUSES = ("Open",)            # status values that mean "offen"
+
+# ---- Org-Namen der Kostenposition: ANNAHMEN, in Ticket 03 gegen die Sandbox zu bestätigen ----
+# (spec.md, offene Recherchepunkte 1 und 4). Object and field names follow CONTEXT.md
+# (`ProjectCostItem__c`, `Person__c`); the rest is guessed from the field labels.
+COST_ITEM_OBJECT = "ProjectCostItem__c"                  # API name of the Kostenposition object
+COST_ITEM_NUMBER_FIELD = "Name"                          # Nummer of the Kostenposition (auto-number)
+COST_ITEM_PROJECT_FIELD = "Project__c"                   # lookup to the Salesforce-Projekt
+COST_ITEM_PERSON_FIELD = "Person__c"                     # lookup to the leistende Person (User)
+COST_ITEM_QUANTITY_FIELD = "Quantity__c"                 # Menge in hours
+COST_ITEM_DELIVERY_DATE_FIELD = "DeliveryDate__c"        # Delivery Date (date only)
+COST_ITEM_DESCRIPTION_FIELD = "Description__c"           # Beschreibung
+COST_ITEM_SERVICE_TYPE_FIELD = "ServiceType__c"          # Service Type picklist
+COST_ITEM_REQUEST_TYPE_FIELD = "CustomerRequestType__c"  # Customer Request Type (free text)
+COST_ITEM_STATUS_FIELD = "Status__c"                     # status picklist
+COST_ITEM_SKILL_LEVEL_FIELD = "SkillLevel__c"            # Skill Level picklist
+COST_ITEM_LOCATION_FIELD = "Location__c"                 # Location picklist
+COST_ITEM_COUNT_AGAINST_BUDGET_FIELD = "CountAgainstBudget__c"  # Count against Budget checkbox
+
+# Picklist API values: ANNAHMEN, in Ticket 03 gegen die Sandbox zu bestätigen.
+# Key = Service Type in domain terms (salesforce_settings.SERVICE_TYPES), value = API value of the org.
+COST_ITEM_SERVICE_TYPE_VALUES = {"Consulting": "Consulting", "Development": "Development"}
+COST_ITEM_STATUS_OPEN = "Open"
+COST_ITEM_SKILL_LEVEL_STANDARD = "Standard"
+COST_ITEM_LOCATION_REMOTE = "Remote"
 
 _TOKEN_PATH = "/services/oauth2/token"
 _TIMEOUT_SECONDS = 15
@@ -83,6 +108,32 @@ class SalesforceProject:
 
     id: str
     name: str
+
+
+@dataclass(slots=True, frozen=True)
+class CostItemDraft:
+    """What a Kostenposition is created from — in domain terms, never in org field names.
+
+    Status, Skill Level, Location and Count against Budget are fixed and therefore not
+    part of it; Tagessatz, prices and calculated fields are left to the org.
+    """
+
+    salesforce_project_id: str
+    person_id: str                    # the leistende Person
+    quantity_hours: float             # Menge, already rounded up to half hours
+    delivery_date: date
+    description: str
+    service_type: str                 # "Consulting" | "Development" (domain value)
+    customer_request_type: str = ""   # only sent when not empty
+
+
+@dataclass(slots=True, frozen=True)
+class CostItem:
+    """A Kostenposition that exists in Salesforce."""
+
+    id: str        # Buchungsreferenz — never shown in the UI
+    number: str    # Nummer for display; empty when Salesforce did not tell it
+    url: str       # link to the record
 
 
 _MAX_SEARCH_HITS = 200
@@ -247,6 +298,54 @@ class SalesforceClient:
 
     # ---- Ende Abgleich-Block ----
 
+    # ---- Kostenposition (Ticket 08) ----
+
+    def is_project_open(self, salesforce_project_id: str) -> bool:
+        """Is this one Salesforce-Projekt still offen? Asked right before Buchen."""
+        return bool(self.open_projects_among([salesforce_project_id]))
+
+    def create_cost_item(self, draft: CostItemDraft) -> CostItem:
+        """Create the Kostenposition and return its ID, Nummer and link.
+
+        Once Salesforce has created it, this method no longer fails: if the Nummer
+        cannot be read afterwards it stays empty, so the Buchungsreferenz is never lost.
+        """
+        if draft.service_type not in COST_ITEM_SERVICE_TYPE_VALUES:
+            raise SalesforceError(f"Unbekannter Service Type: {draft.service_type}")
+        fields = {
+            COST_ITEM_PROJECT_FIELD: draft.salesforce_project_id,
+            COST_ITEM_PERSON_FIELD: draft.person_id,
+            COST_ITEM_QUANTITY_FIELD: draft.quantity_hours,
+            COST_ITEM_DELIVERY_DATE_FIELD: draft.delivery_date.isoformat(),
+            COST_ITEM_DESCRIPTION_FIELD: draft.description,
+            COST_ITEM_SERVICE_TYPE_FIELD: COST_ITEM_SERVICE_TYPE_VALUES[draft.service_type],
+            COST_ITEM_STATUS_FIELD: COST_ITEM_STATUS_OPEN,
+            COST_ITEM_SKILL_LEVEL_FIELD: COST_ITEM_SKILL_LEVEL_STANDARD,
+            COST_ITEM_LOCATION_FIELD: COST_ITEM_LOCATION_REMOTE,
+            COST_ITEM_COUNT_AGAINST_BUDGET_FIELD: True,
+        }
+        if draft.customer_request_type.strip():
+            fields[COST_ITEM_REQUEST_TYPE_FIELD] = draft.customer_request_type.strip()
+        data = self._call("POST", f"/services/data/{API_VERSION}/sobjects/{COST_ITEM_OBJECT}", body=fields)
+        record_id = str(data.get("id") or "") if isinstance(data, dict) else ""
+        if not record_id:
+            raise SalesforceError("Salesforce hat das Anlegen der Kostenposition nicht bestätigt.")
+        return CostItem(id=record_id, number=self._cost_item_number(record_id), url=self.cost_item_url(record_id))
+
+    def cost_item_url(self, cost_item_id: str) -> str:
+        """Link to the record of the Kostenposition in the org."""
+        return f"{self._base}/lightning/r/{COST_ITEM_OBJECT}/{urllib.parse.quote(cost_item_id, safe='')}/view"
+
+    def _cost_item_number(self, cost_item_id: str) -> str:
+        try:
+            records = self._query(
+                f"SELECT Id, {COST_ITEM_NUMBER_FIELD} FROM {COST_ITEM_OBJECT} "
+                f"WHERE Id = '{_escape_soql(cost_item_id)}' LIMIT 1"
+            )
+        except SalesforceError:
+            return ""
+        return str(records[0].get(COST_ITEM_NUMBER_FIELD) or "") if records else ""
+
     def _query(self, soql: str) -> list[dict]:
         """Run one SOQL query (GET .../query?q=...) and return all its records.
 
@@ -296,18 +395,18 @@ class SalesforceClient:
             raise SalesforceError("Salesforce hat kein Zugriffstoken geliefert.")
         return str(token)
 
-    def _call(self, method: str, path: str):
+    def _call(self, method: str, path: str, body: Optional[dict] = None):
         """Authenticated call. On 401 the token is renewed exactly once and the call repeated."""
         if self._access_token is None:
             self._access_token = self._fetch_token()
         try:
-            return self._send(method, path)
+            return self._send(method, path, body)
         except urllib.error.HTTPError as exc:
             if exc.code != 401:
                 raise _org_error(exc) from exc
         self._access_token = self._fetch_token()
         try:
-            return self._send(method, path)
+            return self._send(method, path, body)
         except urllib.error.HTTPError as exc:
             if exc.code != 401:
                 raise _org_error(exc) from exc
@@ -316,15 +415,16 @@ class SalesforceClient:
                 "Salesforce hat die Anmeldung abgelehnt (Zugriffstoken auch nach Erneuerung ungültig)."
             ) from exc
 
-    def _send(self, method: str, path: str):
-        req = urllib.request.Request(
-            self._base + path,
-            method=method,
-            headers={
-                "Authorization": f"Bearer {self._access_token}",
-                "Accept": "application/json",
-            },
-        )
+    def _send(self, method: str, path: str, body: Optional[dict] = None):
+        headers = {
+            "Authorization": f"Bearer {self._access_token}",
+            "Accept": "application/json",
+        }
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(self._base + path, data=data, method=method, headers=headers)
         return self._open(req)
 
     def _open(self, req: urllib.request.Request):

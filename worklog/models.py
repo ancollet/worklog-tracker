@@ -80,6 +80,8 @@ class LogEntry:
     customer_name: Optional[str] = None
     project_color: Optional[str] = None
     customer_booking_system: Optional[str] = None
+    # Nummer of the Kostenposition (display only; the reference above is a Salesforce ID)
+    external_worklog_number: Optional[str] = None
     flags: list["Flag"] = field(default_factory=list)
 
     @property
