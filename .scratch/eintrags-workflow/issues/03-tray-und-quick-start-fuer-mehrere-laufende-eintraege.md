@@ -10,13 +10,16 @@ Spec: `.scratch/eintrags-workflow/spec.md` (Stories 9–13).
 
 **Status:** ready-for-agent
 
-- [ ] Klick auf das Tray-Icon öffnet das Quick-Start-Popup, unabhängig davon, ob etwas läuft.
-- [ ] Das Tray-Menü zeigt pro laufendem Eintrag einen Punkt (Projekt, Task bzw. Beschreibung erkennbar), der genau diesen Eintrag stoppt.
-- [ ] "Alle stoppen" erscheint, sobald mindestens ein Eintrag läuft, und stoppt alle mit korrekter Rundung.
-- [ ] Icon-Zustand "läuft" ab einem laufenden Eintrag; Tooltip nennt die Anzahl laufender Einträge.
-- [ ] Die bestehenden Menüpunkte zum erneuten Starten zuletzt verwendeter Tasks starten einen zusätzlichen Eintrag und stoppen nichts.
-- [ ] Das Quick-Add-Popup hat nur noch den Modus Start; ein blockierter Doppelstart zeigt "läuft bereits".
-- [ ] Ein eventuell vorhandener globaler Hotkey öffnet Quick-Start statt einen Timer umzuschalten.
+- [x] Klick auf das Tray-Icon öffnet das Quick-Start-Popup, unabhängig davon, ob etwas läuft.
+- [x] Das Tray-Menü zeigt pro laufendem Eintrag einen Punkt (Projekt, Task bzw. Beschreibung erkennbar), der genau diesen Eintrag stoppt.
+- [x] "Alle stoppen" erscheint, sobald mindestens ein Eintrag läuft, und stoppt alle mit korrekter Rundung.
+- [x] Icon-Zustand "läuft" ab einem laufenden Eintrag; Tooltip nennt die Anzahl laufender Einträge.
+- [x] Die bestehenden Menüpunkte zum erneuten Starten zuletzt verwendeter Tasks starten einen zusätzlichen Eintrag und stoppen nichts.
+- [x] Das Quick-Add-Popup hat nur noch den Modus Start; ein blockierter Doppelstart zeigt "läuft bereits".
+- [x] Ein eventuell vorhandener globaler Hotkey öffnet Quick-Start statt einen Timer umzuschalten.
+  - Es gibt keinen globalen Hotkey in der App; `worklog --quick` (IPC) öffnet Quick-Start, der Mittelklick aufs Tray-Icon ebenfalls (schaltet nichts mehr um).
 - [ ] Die alte Ein-Timer-Schnittstelle (aktueller Eintrag, wechseln, laufenden Eintrag aktualisieren, Stoppen ohne ID) ist entfernt; kein Aufrufer liest oder schreibt mehr den Einzelzeiger im App-Zustand.
-- [ ] Timer-Tab, Tray-Menü und Logs-Tab bleiben nach Start/Stopp aus jeder dieser Stellen synchron.
+  - Offen: `current`, `is_running`, `stop()` ohne ID, `update_running`, `switch` sind entfernt; den Einzelzeiger liest oder schreibt kein Aufrufer mehr. Übrig ist nur `TimerService.start()`, weil das Fortsetzen im Logs-Tab (`logs_view._resume`) es noch aufruft; das Entfernen gehört zu Ticket 04.
+- [x] Timer-Tab, Tray-Menü und Logs-Tab bleiben nach Start/Stopp aus jeder dieser Stellen synchron.
 - [ ] Tests laufen grün; Tray und Popup sind von Hand geprüft.
+  - Offen: `uv run pytest` ist grün; Tray und Popup sind nur offscreen per Skript geprüft (Menü mit 0/1/3 laufenden Einträgen, Einzel-Stop, Alle stoppen, Tooltip, Quick-Start, blockierter Doppelstart), nicht von Hand an einem echten Tray.

@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from worklog import repository as repo
-from worklog.services.timer import TimerService
+from worklog.services.timer import AlreadyRunningError, TimerService
 from worklog.ui.completers import (
     make_description_completer,
     make_task_completer,
@@ -27,11 +27,7 @@ from worklog.ui.completers import (
 
 
 class QuickAddPopup(QDialog):
-    """Frameless popup near the tray. Enter starts the timer."""
-
-    MODE_START = "start"
-    MODE_EDIT = "edit"
-    MODE_SWITCH = "switch"
+    """Frameless popup near the tray. Enter startet einen weiteren Eintrag (stoppt nichts)."""
 
     def __init__(
         self,
@@ -39,13 +35,11 @@ class QuickAddPopup(QDialog):
         timer: TimerService,
         parent=None,
         *,
-        mode: str = MODE_START,
         anchor_global=None,
     ) -> None:
         super().__init__(parent)
         self.conn = conn
         self.timer = timer
-        self.mode = mode
 
         self.setWindowFlags(
             Qt.WindowType.Dialog
@@ -55,12 +49,7 @@ class QuickAddPopup(QDialog):
         self.setModal(False)
         self.setMinimumWidth(420)
 
-        title = {
-            self.MODE_START: "⏱  Quick Start",
-            self.MODE_EDIT: "✎  Aktuellen Eintrag bearbeiten",
-            self.MODE_SWITCH: "↻  Task wechseln",
-        }[mode]
-        self.title_label = QLabel(title)
+        self.title_label = QLabel("⏱  Quick Start")
         self.title_label.setStyleSheet("font-weight: bold; padding: 4px;")
 
         self.project_combo = QComboBox()
@@ -83,18 +72,14 @@ class QuickAddPopup(QDialog):
         self.desc_input.setCompleter(self.desc_completer)
 
         self.cancel_btn = QPushButton("Esc · Abbrechen")
-        self.start_btn = QPushButton({
-            self.MODE_START: "⏎ Start ▶",
-            self.MODE_EDIT: "⏎ Speichern",
-            self.MODE_SWITCH: "⏎ Wechseln ↻",
-        }[mode])
+        self.start_btn = QPushButton("⏎ Start ▶")
         self.start_btn.setDefault(True)
         self.start_btn.clicked.connect(self._submit)
         self.cancel_btn.clicked.connect(self.reject)
 
-        self.stop_btn = QPushButton("⏸ Stop")
-        self.stop_btn.clicked.connect(self._stop_timer)
-        self.stop_btn.setVisible(self.timer.is_running())
+        self.hint_label = QLabel("")
+        self.hint_label.setStyleSheet("padding: 2px 4px;")
+        self.hint_label.setVisible(False)
 
         self.add_hours_btn = QPushButton("⏰ Stunden nachtragen…")
         self.add_hours_btn.clicked.connect(self._open_add_log)
@@ -106,10 +91,10 @@ class QuickAddPopup(QDialog):
         form.addRow("Task:", self.task_input)
         form.addRow("Beschr.:", self.desc_input)
         outer.addLayout(form)
+        outer.addWidget(self.hint_label)
         btn_row = QHBoxLayout()
         btn_row.addWidget(self.cancel_btn)
         btn_row.addStretch(1)
-        btn_row.addWidget(self.stop_btn)
         btn_row.addWidget(self.start_btn)
         outer.addLayout(btn_row)
         outer.addWidget(self.add_hours_btn)
@@ -117,17 +102,9 @@ class QuickAddPopup(QDialog):
         # populate completers
         self.project_combo.currentIndexChanged.connect(self._on_project_changed)
         self.task_input.editingFinished.connect(self._refresh_desc_suggestions)
+        self.task_input.textEdited.connect(lambda _text: self.hint_label.setVisible(False))
+        self.desc_input.textEdited.connect(lambda _text: self.hint_label.setVisible(False))
         self._on_project_changed()
-
-        # prefill if edit/switch
-        if mode in (self.MODE_EDIT, self.MODE_SWITCH):
-            cur = self.timer.current()
-            if cur:
-                idx = self.project_combo.findData(cur.project_id)
-                if idx >= 0:
-                    self.project_combo.setCurrentIndex(idx)
-                self.task_input.setText(cur.task or "")
-                self.desc_input.setText(cur.description or "")
 
         # enter on either input → submit
         self.task_input.returnPressed.connect(self._submit)
@@ -141,6 +118,7 @@ class QuickAddPopup(QDialog):
             self._move_near(anchor_global)
 
     def _on_project_changed(self) -> None:
+        self.hint_label.setVisible(False)
         pid = self.project_combo.currentData()
         refresh_task_completer(self.task_completer, int(pid) if pid is not None else None)
         self._refresh_desc_suggestions()
@@ -152,10 +130,6 @@ class QuickAddPopup(QDialog):
             int(pid) if pid is not None else None,
             self.task_input.text().strip() or None,
         )
-
-    def _stop_timer(self) -> None:
-        self.timer.stop()
-        self.accept()
 
     def _open_add_log(self) -> None:
         from worklog.ui.log_dialog import LogDialog
@@ -174,12 +148,13 @@ class QuickAddPopup(QDialog):
             return
         task = self.task_input.text().strip() or None
         desc = self.desc_input.text().strip() or None
-        if self.mode == self.MODE_EDIT:
-            self.timer.update_running(project_id=int(pid), task=task, description=desc)
-        elif self.mode == self.MODE_SWITCH:
-            self.timer.switch(project_id=int(pid), task=task, description=desc)
-        else:
-            self.timer.start(project_id=int(pid), task=task, description=desc)
+        try:
+            self.timer.start_entry(project_id=int(pid), task=task, description=desc)
+        except AlreadyRunningError:
+            # Popup bleibt offen, damit Task/Beschreibung angepasst werden können.
+            self.hint_label.setText("Dieser Eintrag läuft bereits.")
+            self.hint_label.setVisible(True)
+            return
         self.accept()
 
     def _move_near(self, global_pos) -> None:

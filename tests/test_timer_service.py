@@ -10,25 +10,24 @@ def test_start_creates_running_log(conn):
     c = repo.create_customer(conn, "Acme")
     p = repo.create_project(conn, customer_id=c.id, name="Web")
     svc = TimerService(conn)
-    log = svc.start(project_id=p.id, task="ACME-1", description="Work")
+    log = svc.start_entry(project_id=p.id, task="ACME-1", description="Work")
     assert log.ended_at is None
     state = repo.get_app_state(conn)
     assert state.last_project_id == p.id
-    assert svc.is_running()
-    assert svc.current().id == log.id
+    assert [entry.id for entry in svc.running_entries()] == [log.id]
 
 
 def test_stop_applies_default_rounding(conn):
     c = repo.create_customer(conn, "Acme")
     p = repo.create_project(conn, customer_id=c.id, name="Web")
     svc = TimerService(conn)
-    svc.start(project_id=p.id, task="X", description=None)
+    log = svc.start_entry(project_id=p.id, task="X", description=None)
     time.sleep(0.05)  # tiny duration, should round up to default 15min = 900s
-    stopped = svc.stop()
+    stopped = svc.stop_entry(log.id)
     assert stopped is not None
     assert stopped.duration_seconds == 15 * 60
     assert stopped.rounded_to_minutes == 15
-    assert not svc.is_running()
+    assert svc.running_entries() == []
 
 
 def test_starting_while_running_keeps_previous_running(conn):
@@ -47,9 +46,9 @@ def test_per_project_rounding_override(conn):
     c = repo.create_customer(conn, "Acme")
     p = repo.create_project(conn, customer_id=c.id, name="Web", round_minutes=30)
     svc = TimerService(conn)
-    svc.start(project_id=p.id, task="X", description=None)
+    log = svc.start_entry(project_id=p.id, task="X", description=None)
     time.sleep(0.05)
-    stopped = svc.stop()
+    stopped = svc.stop_entry(log.id)
     assert stopped.duration_seconds == 30 * 60
     assert stopped.rounded_to_minutes == 30
 
@@ -189,21 +188,7 @@ def test_running_is_derived_from_data_not_from_app_state_pointer(conn):
     assert [log.id for log in svc.running_entries()] == [second.id]
 
 
-# ---- alte Ein-Timer-Schnittstelle (Tray, Quick-Add) über mehreren laufenden Einträgen ----
-
-def test_legacy_interface_refers_to_most_recently_started_entry(conn):
-    p = _project(conn)
-    svc = TimerService(conn)
-    first = svc.start_entry(project_id=p.id, task="A", description=None)
-    second = svc.start_entry(project_id=p.id, task="B", description=None)
-    assert svc.current().id == second.id
-    stopped = svc.stop()
-    assert stopped.id == second.id
-    assert svc.is_running()
-    assert svc.current().id == first.id
-    svc.stop()
-    assert not svc.is_running()
-    assert svc.stop() is None
+# ---- Rest der alten Schnittstelle: start() für das Fortsetzen im Logs-Tab (bis Ticket 04) ----
 
 
 def test_legacy_start_never_stops_running_entries(conn):
@@ -223,33 +208,6 @@ def test_legacy_start_of_identical_entry_returns_running_one(conn):
     assert len(svc.running_entries()) == 1
 
 
-def test_legacy_current_ignores_an_edited_start_time(conn):
-    p = _project(conn)
-    svc = TimerService(conn)
-    first = svc.start_entry(project_id=p.id, task="A", description=None)
-    second = svc.start_entry(project_id=p.id, task="B", description=None)
-    # Start des zweiten Eintrags nachträglich vor den ersten legen.
-    repo.update_log(
-        conn, second.id, project_id=p.id, task="B", description=None,
-        started_at="2000-01-01T08:00:00+01:00", ended_at=None,
-        duration_seconds=None, rounded_to_minutes=None,
-    )
-    assert svc.current().id == second.id
-    assert first.id != second.id
-
-
-def test_legacy_update_running_edits_most_recent_without_stopping(conn):
-    p = _project(conn)
-    svc = TimerService(conn)
-    first = svc.start_entry(project_id=p.id, task="A", description=None)
-    second = svc.start_entry(project_id=p.id, task="B", description=None)
-    updated = svc.update_running(project_id=p.id, task="B2", description="neu")
-    assert updated.id == second.id
-    assert updated.ended_at is None
-    assert repo.get_log(conn, first.id).task == "A"
-    assert len(svc.running_entries()) == 2
-
-
 def test_sums_count_every_parallel_entry_with_full_duration(conn):
     p = _project(conn)
     svc = TimerService(conn)
@@ -258,3 +216,11 @@ def test_sums_count_every_parallel_entry_with_full_duration(conn):
     svc.stop_all()
     total = repo.sum_duration(conn, from_iso="0000", to_iso="9999")
     assert total == 2 * 15 * 60
+
+
+def test_single_timer_interface_is_gone(conn):
+    # Contract-Schritt (Ticket 03): kein "aktueller Eintrag", kein Wechseln,
+    # kein Aktualisieren des laufenden Eintrags, kein Stoppen ohne ID.
+    svc = TimerService(conn)
+    for name in ("current", "is_running", "stop", "update_running", "switch"):
+        assert not hasattr(svc, name), name

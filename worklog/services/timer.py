@@ -94,16 +94,7 @@ class TimerService:
         stopped = [repo.get_log(self.conn, log_id) for log_id in ids]
         return [log for log in stopped if log is not None]
 
-    # ---- alte Ein-Timer-Schnittstelle (Tray, Quick-Add; Umstellung in Ticket 03) ----
-    # Bezieht sich auf den zuletzt gestarteten laufenden Eintrag.
-
-    def current(self) -> Optional[LogEntry]:
-        # Höchste ID statt spätester Start: der Start ist nachträglich editierbar.
-        running = self.running_entries()
-        return max(running, key=lambda log: log.id) if running else None
-
-    def is_running(self) -> bool:
-        return self.current() is not None
+    # ---- Rest der alten Schnittstelle: nur noch das Fortsetzen im Logs-Tab (Ticket 04) ----
 
     def start(self, *, project_id: int, task: Optional[str], description: Optional[str]) -> LogEntry:
         """Wie start_entry (stoppt nie); läuft der identische Eintrag bereits,
@@ -112,12 +103,6 @@ class TimerService:
             return self.start_entry(project_id=project_id, task=task, description=description)
         except AlreadyRunningError as exc:
             return exc.entry
-
-    def stop(self) -> Optional[LogEntry]:
-        current = self.current()
-        if current is None:
-            return None
-        return self.stop_entry(current.id)
 
     def _stop_locked(self, log_id: int) -> None:
         log = repo.get_log(self.conn, log_id)
@@ -142,32 +127,6 @@ class TimerService:
             duration_seconds=rounded,
             rounded_to_minutes=round_minutes,
         )
-
-    def update_running(
-        self, *, project_id: int, task: Optional[str], description: Optional[str]
-    ) -> Optional[LogEntry]:
-        """Edit the in-flight entry without stopping it."""
-        current = self.current()
-        if current is None:
-            return None
-        repo.update_log(
-            self.conn,
-            current.id,
-            project_id=project_id,
-            task=task,
-            description=description,
-            started_at=current.started_at.isoformat(timespec="seconds"),
-            ended_at=None,
-            duration_seconds=None,
-            rounded_to_minutes=None,
-        )
-        repo.set_last_project(self.conn, project_id)
-        return repo.get_log(self.conn, current.id)
-
-    def switch(self, *, project_id: int, task: Optional[str], description: Optional[str]) -> LogEntry:
-        """Stop the most recently started entry and start a new one."""
-        self.stop()
-        return self.start(project_id=project_id, task=task, description=description)
 
 
 def manual_log(
