@@ -39,8 +39,11 @@ from worklog.services.llm_settings import (
 from worklog.services.salesforce_settings import (
     SETTINGS_SF_CONSUMER_KEY,
     SETTINGS_SF_INSTANCE_URL,
+    SERVICE_TYPES,
     LeistendePerson,
+    load_default_service_type,
     load_leistende_person,
+    save_default_service_type,
     save_leistende_person,
 )
 from worklog.ui.llm_cleanup import LlmCall, start_llm_call
@@ -211,6 +214,13 @@ class SettingsDialog(QDialog):
         sf_form.addRow("", sf_search_row)
         sf_form.addRow("", self.sf_person_results)
         sf_form.addRow("", self.sf_person_status)
+        self.sf_default_service_type = QComboBox()
+        self.sf_default_service_type.addItems(SERVICE_TYPES)
+        self.sf_default_service_type.setCurrentText(load_default_service_type(conn))
+        self.sf_default_service_type.setToolTip(
+            "Vorbelegung beim Registrieren von Projekten; pro Projekt änderbar."
+        )
+        sf_form.addRow("Default Service Type:", self.sf_default_service_type)
         for sf_field in (self.sf_instance_url, self.sf_consumer_key, self.sf_consumer_secret):
             sf_field.textChanged.connect(self._update_sf_person_search_enabled)
         self._set_sf_person(load_leistende_person(conn))
@@ -322,6 +332,7 @@ class SettingsDialog(QDialog):
         repo.set_setting(self.conn, SETTINGS_SF_INSTANCE_URL, self.sf_instance_url.text().strip() or None)
         repo.set_setting(self.conn, SETTINGS_SF_CONSUMER_KEY, self.sf_consumer_key.text().strip() or None)
         save_leistende_person(self.conn, self._sf_person)
+        save_default_service_type(self.conn, self.sf_default_service_type.currentText())
 
         new_token = self.jira_token.text()
         if new_token:

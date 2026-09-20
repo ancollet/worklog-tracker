@@ -9,7 +9,7 @@ Spec: `.scratch/salesforce-buchen/spec.md` (Stories 6, 14–20). Begriffe: "Regi
 **Status:** ready-for-agent
 
 - [x] Der Salesforce-Client listet die offenen Projekte eines Accounts (ID, Name).
-- [ ] Einstellungen: globaler Default für den Service Type (Consulting oder Development).
+- [x] Einstellungen: globaler Default für den Service Type (Consulting oder Development).
 - [x] Neue Felder am Projekt über eine Schema-Migration: Default-Service-Type und Customer Request Type (Freitext, optional).
 - [x] Auswahldialog pro Salesforce-Kunde: offene Projekte mit Mehrfachauswahl; pro gewähltem Projekt Service Type (vorbelegt mit dem globalen Default) und optionaler Customer Request Type.
 - [x] Registrieren legt pro gewähltem Salesforce-Projekt genau ein Projekt unter dem Kunden an, mit Namen und Salesforce-Projekt-ID als externer Referenz.
@@ -29,3 +29,4 @@ Spec: `.scratch/salesforce-buchen/spec.md` (Stories 6, 14–20). Begriffe: "Regi
 - Der Auswahldialog aus Ticket 04 ist verallgemeinert (`worklog/ui/salesforce_choice_dialog.py`): Einzelauswahl für Account registrieren/Verbinden und Projekt verbinden, Mehrfachauswahl mit Service Type und Customer Request Type pro Zeile für "Projekte registrieren…".
 - Registrieren mehrerer Projekte ist alles-oder-nichts. Hat der Kunde schon ein gleichnamiges, von Hand angelegtes Projekt, wird abgelehnt mit Verweis auf "Verbinden…".
 - UI per Offscreen-Smoke-Test mit gefälschtem Client geprüft (Aufrufe nicht im UI-Thread, keine IDs in Baum, Details und Dialog, deaktiviert mit Hinweis ohne Verbindung, Ladefehler lesbar); nicht gegen eine echte Org abgenommen (Ticket 11).
+- Nachtrag: Auswahlfeld "Default Service Type" im Salesforce-Abschnitt des Einstellungsdialogs ergänzt (offscreen geprüft: Vorbelegung, Speichern, Wiederöffnen).
