@@ -8,14 +8,16 @@ from __future__ import annotations
 import sqlite3
 from typing import Callable, Optional
 
-from PyQt6.QtCore import QEvent, QObject, Qt
-from PyQt6.QtGui import QAction, QGuiApplication
+from PyQt6.QtCore import QEvent, QObject, Qt, QUrl
+from PyQt6.QtGui import QAction, QDesktopServices, QGuiApplication
 from PyQt6.QtWidgets import QAbstractItemView, QMenu, QMessageBox, QWidget
 
 from worklog import repository as repo
 from worklog.models import LogEntry
 from worklog.services.booking import cancel_booking, cancel_booking_hint
 from worklog.services.entry_menu import clipboard_text, flag_menu_state, plan_entry_menu
+from worklog.services.salesforce_booking import booking_block
+from worklog.services.salesforce_settings import load_configuration
 from worklog.services.timer import (
     AlreadyRunningError,
     ProjectArchivedError,
@@ -23,6 +25,7 @@ from worklog.services.timer import (
     TimerService,
 )
 from worklog.ui.jira_booking import book_jira
+from worklog.ui.salesforce_booking import book_salesforce
 
 
 class _KeepSelectionOnRightClick(QObject):
@@ -112,7 +115,16 @@ def build_entry_context_menu(
     after every action that changed data. `move_anchor_id` (the clicked entry)
     adds "Verschieben auf…", with the date picker preset to that entry's day.
     """
-    plan = plan_entry_menu(logs)
+    sf_configuration = None  # loaded only when a Salesforce-Kunde is involved (touches the keyring)
+
+    def salesforce_block(log: LogEntry) -> Optional[str]:
+        nonlocal sf_configuration
+        if sf_configuration is None:
+            sf_configuration = load_configuration(conn)
+        block = booking_block(conn, log, sf_configuration)
+        return str(block) if block else None
+
+    plan = plan_entry_menu(logs, salesforce_block=salesforce_block)
     log_ids = [int(log.id) for log in logs]
     n = len(log_ids)
 
@@ -194,21 +206,39 @@ def build_entry_context_menu(
     manage.triggered.connect(manage_flags)
     flags_menu.addAction(manage)
 
-    if plan.jira_action is not None or plan.can_cancel_booking:
+    if plan.booking_system is not None or plan.can_cancel_booking:
         menu.addSeparator()
+
+        def add_booking_action(label: str, booking_fn, disabled_reason: Optional[str] = None) -> None:
+            booking_act = QAction(label, menu)
+            if disabled_reason:
+                booking_act.setEnabled(False)
+                booking_act.setToolTip(disabled_reason)
+
+            def run_booking(_checked=False) -> None:
+                if booking_fn(parent, conn, log_ids[0]):
+                    on_changed()
+
+            booking_act.triggered.connect(run_booking)
+            menu.addAction(booking_act)
+
+        if plan.booking_system == "jira":
+            add_booking_action("In Jira buchen…", book_jira)
+        elif plan.booking_system == "salesforce":
+            menu.setToolTipsVisible(True)  # the reason why booking is disabled
+            add_booking_action(
+                "In Salesforce buchen…",
+                lambda parent_, conn_, log_id: book_salesforce(parent_, conn_, [log_id]),
+                plan.booking_disabled_reason,
+            )
+        if plan.booking_url is not None:
+            open_act = QAction("↗  Buchung im Browser öffnen", menu)
+            open_act.triggered.connect(
+                lambda _checked=False, url=plan.booking_url: QDesktopServices.openUrl(QUrl(url))
+            )
+            menu.addAction(open_act)
         if plan.can_cancel_booking:
-            booking_act = QAction("Buchung stornieren…", menu)
-            booking_fn = cancel_entry_booking
-        else:
-            booking_act = QAction("In Jira buchen…", menu)
-            booking_fn = book_jira
-
-        def run_booking(_checked=False) -> None:
-            if booking_fn(parent, conn, log_ids[0]):
-                on_changed()
-
-        booking_act.triggered.connect(run_booking)
-        menu.addAction(booking_act)
+            add_booking_action("Buchung stornieren…", cancel_entry_booking)
 
     menu.addSeparator()
     del_act = QAction(plan.delete_label, menu)

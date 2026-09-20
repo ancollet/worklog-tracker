@@ -71,6 +71,7 @@ def _row_to_log(row: sqlite3.Row) -> LogEntry:
         customer_name=row["customer_name"] if "customer_name" in keys else None,
         project_color=row["project_color"] if "project_color" in keys else None,
         customer_booking_system=row["customer_booking_system"] if "customer_booking_system" in keys else None,
+        external_worklog_number=row["external_worklog_number"] if "external_worklog_number" in keys else None,
     )
 
 
@@ -399,19 +400,34 @@ def set_log_external_ref(
     worklog_id: Optional[str],
     worklog_url: Optional[str] = None,
     synced_at_iso: Optional[str] = None,
+    worklog_number: Optional[str] = None,
 ) -> None:
     """Persist the external system's worklog-id (idempotency) after a successful sync.
 
     Pass worklog_id=None to clear the reference (e.g. after the user undid the booking).
+    `worklog_number` is the display number of the Buchung (Nummer der Kostenposition).
     """
     conn.execute(
         """
         UPDATE log_entry
         SET external_worklog_id = ?, external_worklog_url = ?, external_synced_at = ?,
-            updated_at = ?
+            external_worklog_number = ?, updated_at = ?
         WHERE id = ?
         """,
-        (worklog_id, worklog_url, synced_at_iso, _now_iso(), log_id),
+        (worklog_id, worklog_url, synced_at_iso, worklog_number, _now_iso(), log_id),
+    )
+
+
+def set_log_booked_duration(
+    conn: sqlite3.Connection, log_id: int, *, duration_seconds: int, ended_at: str
+) -> None:
+    """Buchen sets the duration of the Eintrag to the gebuchte Menge (Ende = Start + Dauer).
+
+    Part of the Buchung itself, so — like the Buchungsreferenz — it does not ask the Sperr-Regel.
+    """
+    conn.execute(
+        "UPDATE log_entry SET duration_seconds = ?, ended_at = ?, updated_at = ? WHERE id = ?",
+        (duration_seconds, ended_at, _now_iso(), log_id),
     )
 
 

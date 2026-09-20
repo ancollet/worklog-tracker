@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from PyQt6.QtCore import Qt, QPoint, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, QPoint, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QDesktopServices, QGuiApplication
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from worklog import repository as repo
+from worklog.services.booking import booked_cell_text, booked_cell_tooltip
 from worklog.services.entry_menu import plan_entry_menu, target_log_ids
 from worklog.services.rounding import format_hm_short
 from worklog.services.timer import TimerService
@@ -50,6 +51,7 @@ class LogsView(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.cellDoubleClicked.connect(self._edit_row)
+        self.table.cellClicked.connect(self._open_booking_on_ctrl_click)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         keep_selection_on_right_click(self.table)
@@ -96,7 +98,7 @@ class LogsView(QWidget):
             )
             duration = format_hm_short(log.duration_seconds or 0) if log.duration_seconds else "läuft…"
             manual = "✓" if log.is_manual else ""
-            booked = _booked_cell(log)
+            booked = booked_cell_text(log)
             cells = [date_str, project, log.task or "", log.description or "", duration, manual, booked]
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(text)
@@ -105,10 +107,19 @@ class LogsView(QWidget):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 if col == 6 and log.is_booked:
                     item.setForeground(QColor("#15803d"))
-                    if log.external_worklog_url:
-                        item.setToolTip(log.external_worklog_url)
+                    item.setToolTip(booked_cell_tooltip(log))
                 self.table.setItem(r, col, item)
         self._update_buttons()
+
+    def _open_booking_on_ctrl_click(self, row: int, col: int) -> None:
+        """Strg+Klick on "Gebucht" opens the record of the Buchung in the browser."""
+        if col != 6 or not 0 <= row < len(self._row_logs):
+            return
+        if not QGuiApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier:
+            return
+        log = self._row_logs[row]
+        if log.is_booked and log.external_worklog_url:
+            QDesktopServices.openUrl(QUrl(log.external_worklog_url))
 
     def _selected_logs(self) -> list:
         """Selected entries in visual (top-to-bottom) order."""
@@ -193,11 +204,3 @@ class LogsView(QWidget):
     def _after_change(self) -> None:
         self.refresh()
         self.changed.emit()
-
-
-def _booked_cell(log) -> str:
-    if log.is_booked:
-        return f"✓ {log.external_worklog_id}"
-    if log.customer_booking_system == "jira":
-        return "—"
-    return ""
