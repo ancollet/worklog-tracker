@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Union
+from typing import Sequence, Union
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QTextCursor
@@ -11,8 +11,10 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPlainTextEdit,
+    QSizePolicy,
     QTextEdit,
     QToolButton,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -100,15 +102,30 @@ class SnippetButton(QToolButton):
         self.field.setTextCursor(cursor)
 
 
-def with_snippet_button(conn: sqlite3.Connection, field: DescriptionField) -> QWidget:
-    """Wrap ``field`` and a SnippetButton into one row widget for layouts."""
+def with_snippet_button(
+    conn: sqlite3.Connection, field: DescriptionField, extra_buttons: Sequence[QWidget] = ()
+) -> QWidget:
+    """Wrap ``field`` and a SnippetButton into one row widget for layouts.
+
+    ``extra_buttons`` (e.g. "Bereinigen") join the SnippetButton: stacked below
+    it next to a multi-line field, in a row after it next to a single-line one.
+    """
     container = QWidget()
     layout = QHBoxLayout(container)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.addWidget(field, 1)
     button = SnippetButton(conn, field, container)
     multiline = not isinstance(field, QLineEdit)
-    layout.addWidget(
-        button, 0, Qt.AlignmentFlag.AlignTop if multiline else Qt.AlignmentFlag.AlignVCenter
-    )
+    if multiline and extra_buttons:
+        column = QVBoxLayout()
+        column.setContentsMargins(0, 0, 0, 0)
+        for btn in (button, *extra_buttons):
+            btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+            column.addWidget(btn)
+        column.addStretch(1)
+        layout.addLayout(column)
+        return container
+    alignment = Qt.AlignmentFlag.AlignTop if multiline else Qt.AlignmentFlag.AlignVCenter
+    for btn in (button, *extra_buttons):
+        layout.addWidget(btn, 0, alignment)
     return container
