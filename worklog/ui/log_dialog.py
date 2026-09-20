@@ -34,6 +34,7 @@ from worklog.ui.completers import (
     refresh_description_completer,
     refresh_task_completer,
 )
+from worklog.ui.llm_cleanup import CleanupButton
 from worklog.ui.snippet_button import with_snippet_button
 
 ROUNDING_CHOICES = [
@@ -158,7 +159,13 @@ class LogDialog(QDialog):
         common = QFormLayout()
         common.addRow("Projekt:", self.project_combo)
         common.addRow("Task:", self.task_input)
-        common.addRow("Beschr.:", with_snippet_button(conn, self.desc_input))
+        # LLM-Bereinigung: only ever on click; "Übernehmen" just fills the field.
+        self.cleanup_button = CleanupButton(
+            conn, self.desc_input, lambda: self.task_input.text().strip() or None
+        )
+        common.addRow(
+            "Beschr.:", with_snippet_button(conn, self.desc_input, [self.cleanup_button])
+        )
         round_row = QHBoxLayout()
         round_row.addWidget(self.round_combo)
         round_row.addWidget(self.round_preview, 1)
@@ -214,6 +221,11 @@ class LogDialog(QDialog):
         self.duration_label.setText(format_hm_short(seconds))
         rounded = round_up_seconds(seconds, self._effective_round_minutes())
         self.round_preview.setText(f"→ {format_hm_short(rounded)}")
+
+    def done(self, result: int) -> None:
+        # A still-running Bereinigung may finish after the dialog is gone; it must not call back.
+        self.cleanup_button.cancel()
+        super().done(result)
 
     # ------------------ load / save ------------------
 

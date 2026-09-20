@@ -19,13 +19,23 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
+    QTabWidget,
     QVBoxLayout,
+    QWidget,
 )
 
 from worklog import repository as repo
 from worklog.paths import autostart_desktop_path
 from worklog.services import credentials, jira as jira_client, salesforce as sf_client
+from worklog.services import llm_cleanup
+from worklog.services.llm_settings import (
+    SETTINGS_LLM_DEPLOYMENT,
+    SETTINGS_LLM_ENDPOINT,
+    load_system_prompt,
+    save_system_prompt,
+)
 from worklog.services.salesforce_settings import (
     SETTINGS_SF_CONSUMER_KEY,
     SETTINGS_SF_INSTANCE_URL,
@@ -33,6 +43,7 @@ from worklog.services.salesforce_settings import (
     load_leistende_person,
     save_leistende_person,
 )
+from worklog.ui.llm_cleanup import LlmCall, start_llm_call
 from worklog.ui.theme import DEFAULT_UI_THEME, SETTINGS_UI_THEME, THEMES, apply_theme
 
 ROUNDING_CHOICES = [
@@ -243,6 +254,62 @@ class SettingsDialog(QDialog):
         sf_group = QGroupBox("Salesforce")
         sf_group.setLayout(sf_form)
 
+        # ---- LLM ----
+        self.llm_endpoint = QLineEdit(repo.get_setting(conn, SETTINGS_LLM_ENDPOINT, "") or "")
+        self.llm_endpoint.setPlaceholderText("https://your-resource.openai.azure.com")
+        self.llm_deployment = QLineEdit(repo.get_setting(conn, SETTINGS_LLM_DEPLOYMENT, "") or "")
+        self.llm_deployment.setPlaceholderText("Name des Modell-Deployments")
+        self.llm_api_key = QLineEdit()
+        self.llm_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        llm_keyring_problem = ""
+        try:
+            existing_llm_key = credentials.get_llm_api_key()
+        except credentials.CredentialsUnavailableError as exc:
+            existing_llm_key = None
+            llm_keyring_problem = str(exc)
+        self._existing_llm_key = existing_llm_key
+        self.llm_api_key.setPlaceholderText(
+            "(unverändert)" if existing_llm_key else "API-Key der Azure-OpenAI/Foundry-Ressource"
+        )
+        self.llm_prompt = QPlainTextEdit(load_system_prompt(conn))
+        self.llm_prompt.setFixedHeight(180)
+        self.llm_prompt.setTabChangesFocus(True)
+        self.llm_prompt_reset_btn = QPushButton("Auf Standard zurücksetzen")
+        self.llm_prompt_reset_btn.setAutoDefault(False)
+        self.llm_prompt_reset_btn.clicked.connect(self._reset_llm_prompt)
+        self.llm_test_btn = QPushButton("Verbindung testen")
+        self.llm_test_btn.setAutoDefault(False)
+        self.llm_test_btn.clicked.connect(self._test_llm)
+        self.llm_status = QLabel("")
+        self.llm_status.setWordWrap(True)
+        self._llm_test: LlmCall | None = None
+        self._llm_test_connection = llm_cleanup.test_connection
+        if llm_keyring_problem:
+            self._set_llm_status(f"OS-Keyring nicht erreichbar: {llm_keyring_problem}", "error")
+        else:
+            self._set_llm_status("", "neutral")
+
+        llm_form = QFormLayout()
+        llm_form.addRow("Endpoint-URL:", self.llm_endpoint)
+        llm_form.addRow("Deployment-Name:", self.llm_deployment)
+        llm_form.addRow("API-Key:", self.llm_api_key)
+        llm_form.addRow("Systemprompt:", self.llm_prompt)
+        llm_button_row = QHBoxLayout()
+        llm_button_row.addWidget(self.llm_prompt_reset_btn)
+        llm_button_row.addWidget(self.llm_test_btn)
+        llm_button_row.addStretch(1)
+        llm_form.addRow("", llm_button_row)
+        llm_form.addRow("", self.llm_status)
+        llm_hint = QLabel(
+            "Azure OpenAI / Foundry (v1-Schnittstelle). Gesendet werden nur Systemprompt, Task und "
+            "Beschreibung. Der API-Key wird im OS-Keyring gespeichert, nicht in der DB."
+        )
+        llm_hint.setStyleSheet("color: gray; font-size: 11px;")
+        llm_hint.setWordWrap(True)
+        llm_form.addRow("", llm_hint)
+        llm_group = QGroupBox("LLM")
+        llm_group.setLayout(llm_form)
+
         self.setMinimumWidth(460)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -251,10 +318,22 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
 
+        # One tab per section: stacked, the sections no longer fit on a laptop screen.
+        tabs = QTabWidget()
+        for title, content in (
+            ("Allgemein", form), ("Jira", jira_group), ("Salesforce", sf_group), ("LLM", llm_group),
+        ):
+            page = QWidget()
+            page_layout = QVBoxLayout(page)
+            if isinstance(content, QFormLayout):
+                page_layout.addLayout(content)
+            else:
+                page_layout.addWidget(content)
+            page_layout.addStretch(1)
+            tabs.addTab(page, title)
+
         outer = QVBoxLayout(self)
-        outer.addLayout(form)
-        outer.addWidget(jira_group)
-        outer.addWidget(sf_group)
+        outer.addWidget(tabs)
         outer.addWidget(buttons)
 
     def _save(self) -> None:
@@ -291,6 +370,20 @@ class SettingsDialog(QDialog):
                 QMessageBox.warning(
                     self, "Keyring",
                     f"Konnte Salesforce Consumer Secret nicht im OS-Keyring speichern: {exc}",
+                )
+
+        repo.set_setting(self.conn, SETTINGS_LLM_ENDPOINT, self.llm_endpoint.text().strip() or None)
+        repo.set_setting(self.conn, SETTINGS_LLM_DEPLOYMENT, self.llm_deployment.text().strip() or None)
+        # Only a deviation from the default is stored; after "Zurücksetzen" it is deleted.
+        save_system_prompt(self.conn, self.llm_prompt.toPlainText())
+        new_llm_key = self.llm_api_key.text()
+        if new_llm_key:
+            try:
+                credentials.set_llm_api_key(new_llm_key)
+            except credentials.CredentialsUnavailableError as exc:
+                QMessageBox.warning(
+                    self, "Keyring",
+                    f"Konnte LLM-API-Key nicht im OS-Keyring speichern: {exc}",
                 )
 
         try:
@@ -437,6 +530,41 @@ class SettingsDialog(QDialog):
                 f"Ausgewählt: {person.display_text} — wird mit „Speichern“ hinterlegt.", "ok"
             )
 
+    # ---- LLM ----
+
+    def _set_llm_status(self, text: str, kind: str) -> None:
+        color = {"ok": "#15803d", "error": "#b91c1c"}.get(kind, "gray")
+        self.llm_status.setText(text)
+        self.llm_status.setStyleSheet(f"color: {color}; font-size: 11px;")
+
+    def _reset_llm_prompt(self) -> None:
+        self.llm_prompt.setPlainText(llm_cleanup.DEFAULT_SYSTEM_PROMPT)
+        self._set_llm_status("Standardprompt eingesetzt — wird mit „Speichern“ übernommen.", "neutral")
+
+    def _test_llm(self) -> None:
+        # What is typed into the dialog right now — saved or not.
+        endpoint = self.llm_endpoint.text().strip()
+        deployment = self.llm_deployment.text().strip()
+        api_key = self.llm_api_key.text() or self._existing_llm_key
+        if not (endpoint and deployment and api_key):
+            self._set_llm_status("Endpoint-URL, Deployment-Name und API-Key erforderlich.", "error")
+            return
+        creds = llm_cleanup.LlmCredentials(endpoint, deployment, api_key)
+        test_connection = self._llm_test_connection
+        self._set_llm_status("Teste…", "neutral")
+        self.llm_test_btn.setEnabled(False)
+        self._llm_test = start_llm_call(lambda: test_connection(creds), self._on_llm_test_finished)
+
+    def _on_llm_test_finished(self, ok: bool, result) -> None:
+        if self.sender() is not self._llm_test:
+            return
+        self._llm_test = None
+        self.llm_test_btn.setEnabled(True)
+        if ok:
+            self._set_llm_status(f"OK — das Modell antwortet ({result}).", "ok")
+        else:
+            self._set_llm_status(f"Fehler: {result}", "error")
+
     def keyPressEvent(self, event) -> None:
         # Enter in the search field searches; it must not trigger "Speichern".
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.sf_person_query.hasFocus():
@@ -452,6 +580,9 @@ class SettingsDialog(QDialog):
         if self._sf_search is not None:
             self._sf_search.finished_with.disconnect(self._on_sf_search_finished)
             self._sf_search = None
+        if self._llm_test is not None:
+            self._llm_test.finished_with.disconnect(self._on_llm_test_finished)
+            self._llm_test = None
         super().done(result)
 
     def _apply_autostart(self, enable: bool) -> None:

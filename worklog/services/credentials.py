@@ -21,6 +21,7 @@ SERVICE_NAME = "worklog"
 # Keys are stored under a single service name; the username field distinguishes systems.
 JIRA_TOKEN_KEY = "jira:api_token"
 SALESFORCE_SECRET_KEY = "salesforce:consumer_secret"
+LLM_API_KEY = "llm:api_key"
 
 
 class CredentialsUnavailableError(RuntimeError):
@@ -65,3 +66,11 @@ def get_salesforce_secret() -> Optional[str]:
 
 def set_salesforce_secret(secret: Optional[str]) -> None:
     set_secret(SALESFORCE_SECRET_KEY, secret)
+
+
+def get_llm_api_key() -> Optional[str]:
+    return get_secret(LLM_API_KEY)
+
+
+def set_llm_api_key(api_key: Optional[str]) -> None:
+    set_secret(LLM_API_KEY, api_key)
