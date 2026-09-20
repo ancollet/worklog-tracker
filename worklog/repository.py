@@ -230,6 +230,19 @@ def list_logs(
     return logs
 
 
+def list_running_logs(conn: sqlite3.Connection) -> list[LogEntry]:
+    """Laufende Einträge (ohne Ende), ältester Start zuerst."""
+    rows = conn.execute(
+        LOG_SELECT + " WHERE l.ended_at IS NULL ORDER BY l.started_at, l.id"
+    ).fetchall()
+    logs = [_row_to_log(r) for r in rows]
+    if logs:
+        flag_map = _load_flags_for_logs(conn, [l.id for l in logs])
+        for l in logs:
+            l.flags = flag_map.get(l.id, [])
+    return logs
+
+
 def create_log(
     conn: sqlite3.Connection,
     *,

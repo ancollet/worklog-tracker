@@ -28,7 +28,7 @@ from worklog import repository as repo
 from worklog.models import LogEntry
 from worklog.services.entry_menu import target_log_ids
 from worklog.services.rounding import format_hm_short, format_hms
-from worklog.services.timer import TimerService, manual_log
+from worklog.services.timer import AlreadyRunningError, TimerService, manual_log
 from worklog.ui.completers import (
     make_description_completer,
     make_task_completer,
@@ -249,6 +249,88 @@ class RecentTree(QTreeWidget):
         menu.deleteLater()
 
 
+class RunningList(QTreeWidget):
+    """Liste "Läuft gerade": eine Zeile pro laufendem Eintrag mit eigener Uhr und Stop-Button."""
+
+    edit_requested = pyqtSignal(int)
+    stop_requested = pyqtSignal(int)
+
+    COLUMNS = ["Projekt", "Task", "Beschreibung", "Läuft", ""]
+    COL_PROJECT, COL_TASK, COL_DESC, COL_CLOCK, COL_STOP = range(5)
+    MAX_VISIBLE_ROWS = 6
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._started_at: dict[int, datetime] = {}
+        self.setHeaderLabels(self.COLUMNS)
+        self.setRootIsDecorated(False)
+        self.setSelectionBehavior(QTreeWidget.SelectionBehavior.SelectRows)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        header = self.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(self.COL_PROJECT, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(self.COL_TASK, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(self.COL_DESC, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(self.COL_CLOCK, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(self.COL_STOP, QHeaderView.ResizeMode.ResizeToContents)
+        self.itemDoubleClicked.connect(self._on_double_click)
+
+    def populate(self, logs: list[LogEntry]) -> None:
+        self.clear()
+        self._started_at = {}
+        clock_font = QFont()
+        clock_font.setFamily("monospace")
+        clock_font.setBold(True)
+        for log in logs:
+            item = QTreeWidgetItem(["", log.task or "", log.description or "", "", ""])
+            item.setData(0, Qt.ItemDataRole.UserRole, int(log.id))
+            item.setToolTip(self.COL_DESC, log.description or "")
+            item.setFont(self.COL_CLOCK, clock_font)
+            item.setTextAlignment(
+                self.COL_CLOCK, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.addTopLevelItem(item)
+            self.setItemWidget(item, self.COL_PROJECT, _make_project_chip_widget(log))
+            stop_button = QPushButton("⏸ Stop")
+            stop_button.clicked.connect(
+                lambda _checked=False, log_id=int(log.id): self.stop_requested.emit(log_id)
+            )
+            self.setItemWidget(item, self.COL_STOP, stop_button)
+            self._started_at[int(log.id)] = log.started_at
+        self.tick()
+        self._fit_height()
+
+    def log_ids(self) -> list[int]:
+        return [
+            int(self.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole))
+            for i in range(self.topLevelItemCount())
+        ]
+
+    def tick(self) -> None:
+        """Update every row's clock from its own start."""
+        now = datetime.now().astimezone()
+        for i in range(self.topLevelItemCount()):
+            item = self.topLevelItem(i)
+            started = self._started_at.get(int(item.data(0, Qt.ItemDataRole.UserRole)))
+            if started is None:
+                continue
+            elapsed = (now - started).total_seconds()
+            item.setText(self.COL_CLOCK, format_hms(int(max(0, elapsed))))
+
+    def _fit_height(self) -> None:
+        rows = self.topLevelItemCount()
+        if rows == 0:
+            return
+        row_height = max(self.sizeHintForRow(0), 28)
+        visible = min(rows, self.MAX_VISIBLE_ROWS)
+        self.setFixedHeight(self.header().sizeHint().height() + visible * row_height + 2 * self.frameWidth())
+
+    def _on_double_click(self, item: QTreeWidgetItem, _col: int) -> None:
+        log_id = item.data(0, Qt.ItemDataRole.UserRole)
+        if log_id is not None:
+            self.edit_requested.emit(int(log_id))
+
+
 class TimerWidget(QWidget):
     changed = pyqtSignal()
 
@@ -269,17 +351,20 @@ class TimerWidget(QWidget):
         self.task_input.setCompleter(self.task_completer)
         self.desc_input.setCompleter(self.desc_completer)
 
-        self.display = QLabel("00:00:00")
-        f = QFont()
-        f.setPointSize(36)
-        f.setBold(True)
-        f.setFamily("monospace")
-        self.display.setFont(f)
-        self.display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.running_label = QLabel("Läuft gerade   ·   Doppelklick zum Bearbeiten")
+        self.running_label.setStyleSheet("color: #6B7280;")
+        self.running_list = RunningList(self)
+        self.running_list.edit_requested.connect(self._edit_log)
+        self.running_list.stop_requested.connect(self._stop_entry)
 
         self.start_button = QPushButton("▶ Start")
+        self.start_button.setToolTip("Startet einen neuen Eintrag; laufende Einträge laufen weiter (Ctrl+S).")
         self.start_button.setMinimumHeight(48)
-        self.start_button.clicked.connect(self.toggle_start_stop)
+        self.start_button.clicked.connect(self.start_from_form)
+
+        self.start_hint = QLabel("")
+        self.start_hint.setStyleSheet("color: #B45309;")
+        self.start_hint.setVisible(False)
 
         self.quick_duration = QDoubleSpinBox()
         self.quick_duration.setSuffix(" h")
@@ -318,6 +403,9 @@ class TimerWidget(QWidget):
         # Layout
         outer = QVBoxLayout(self)
 
+        outer.addWidget(self.running_label)
+        outer.addWidget(self.running_list)
+
         row = QHBoxLayout()
         row.addWidget(QLabel("Projekt:"))
         row.addWidget(self.project_combo, 1)
@@ -334,13 +422,11 @@ class TimerWidget(QWidget):
         outer.addLayout(row3)
 
         timer_row = QHBoxLayout()
-        timer_row.addStretch(1)
-        timer_row.addWidget(self.display, 2)
         timer_row.addWidget(self.start_button)
+        timer_row.addWidget(self.start_hint, 1)
         timer_row.addSpacing(16)
         timer_row.addWidget(self.quick_duration)
         timer_row.addWidget(self.quick_log_button)
-        timer_row.addStretch(1)
         outer.addLayout(timer_row)
 
         outer.addWidget(self.summary_label)
@@ -375,7 +461,7 @@ class TimerWidget(QWidget):
         self._reload_projects()
         self._reload_recent()
         self._reload_summary()
-        self._sync_running_state()
+        self._reload_running()
         refresh_task_completer(self.task_completer, self.current_project_id())
 
     def open_add_log(self) -> None:
@@ -423,21 +509,26 @@ class TimerWidget(QWidget):
         )
         self.changed.emit()
 
-    def toggle_start_stop(self) -> None:
-        if self.timer.is_running():
-            self.timer.stop()
-            self.changed.emit()
-        else:
-            pid = self.current_project_id()
-            if pid is None:
-                QMessageBox.information(self, "Kein Projekt", "Bitte erst ein Projekt anlegen.")
-                return
-            self.timer.start(
+    def start_from_form(self) -> None:
+        """Start a new laufender Eintrag from the form; never stops anything."""
+        pid = self.current_project_id()
+        if pid is None:
+            QMessageBox.information(self, "Kein Projekt", "Bitte erst ein Projekt anlegen.")
+            return
+        try:
+            self.timer.start_entry(
                 project_id=pid,
                 task=self.task_input.text().strip() or None,
                 description=self.desc_input.text().strip() or None,
             )
-            self.changed.emit()
+        except AlreadyRunningError:
+            self._show_start_hint("Dieser Eintrag läuft bereits.")
+            return
+        self._show_start_hint("")
+        # Projekt bleibt; Task und Beschreibung gehören zum gestarteten Eintrag.
+        self.task_input.clear()
+        self.desc_input.clear()
+        self.changed.emit()
 
     def current_project_id(self) -> Optional[int]:
         data = self.project_combo.currentData()
@@ -487,30 +578,24 @@ class TimerWidget(QWidget):
             f"Heute: {format_hm_short(today)}     ·     Diese Woche: {format_hm_short(week)}"
         )
 
-    def _sync_running_state(self) -> None:
-        cur = self.timer.current()
-        if cur is None:
-            self.start_button.setText("▶ Start")
-            self.display.setText("00:00:00")
-            return
-        self.start_button.setText("⏸ Stop")
-        if cur.project_id is not None:
-            idx = self.project_combo.findData(cur.project_id)
-            if idx >= 0:
-                self.project_combo.blockSignals(True)
-                self.project_combo.setCurrentIndex(idx)
-                self.project_combo.blockSignals(False)
-        if cur.task and self.task_input.text() != cur.task:
-            self.task_input.setText(cur.task)
-        if cur.description and self.desc_input.text() != cur.description:
-            self.desc_input.setText(cur.description)
+    def _reload_running(self) -> None:
+        running = self.timer.running_entries()
+        self.running_list.populate(running)
+        self.running_label.setVisible(bool(running))
+        self.running_list.setVisible(bool(running))
+
+    def _stop_entry(self, log_id: int) -> None:
+        self.timer.stop_entry(log_id)
+        self.changed.emit()
+
+    def _show_start_hint(self, text: str) -> None:
+        self.start_hint.setText(text)
+        self.start_hint.setVisible(bool(text))
+        if text:
+            QTimer.singleShot(4000, lambda: self._show_start_hint("") if self.start_hint.text() == text else None)
 
     def _on_tick(self) -> None:
-        cur = self.timer.current()
-        if cur is None:
-            return
-        elapsed = (datetime.now().astimezone() - cur.started_at).total_seconds()
-        self.display.setText(format_hms(int(max(0, elapsed))))
+        self.running_list.tick()
 
     def _on_project_changed(self) -> None:
         refresh_task_completer(self.task_completer, self.current_project_id())

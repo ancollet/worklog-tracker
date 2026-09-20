@@ -44,7 +44,7 @@ class MainWindow(QMainWindow):
         self.customers_tab.changed.connect(self._refresh_others)
 
         # shortcuts
-        QShortcut(QKeySequence("Ctrl+S"), self, activated=self.timer_tab.toggle_start_stop)
+        QShortcut(QKeySequence("Ctrl+S"), self, activated=self.timer_tab.start_from_form)
         QShortcut(QKeySequence("Ctrl+N"), self, activated=lambda: self.tabs.setCurrentIndex(0))
         QShortcut(QKeySequence("Ctrl+L"), self, activated=self.timer_tab.open_add_log)
 

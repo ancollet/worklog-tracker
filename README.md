@@ -75,7 +75,7 @@ uv run pytest -v
 
 | Shortcut | Aktion |
 |----------|--------|
-| `Ctrl+S` | Timer Start/Stop |
+| `Ctrl+S` | Neuen Eintrag aus dem Formular starten (stoppt nichts) |
 | `Ctrl+N` | Timer-Tab fokussieren |
 | `Ctrl+L` | Add-Log-Dialog |
 
