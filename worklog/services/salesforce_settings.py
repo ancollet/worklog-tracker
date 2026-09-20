@@ -23,8 +23,25 @@ SETTINGS_SF_CONSUMER_KEY = "salesforce.consumer_key"
 SETTINGS_SF_PERSON_ID = "salesforce.person_id"
 SETTINGS_SF_PERSON_NAME = "salesforce.person_name"
 SETTINGS_SF_PERSON_EMAIL = "salesforce.person_email"
+SETTINGS_SF_DEFAULT_SERVICE_TYPE = "salesforce.default_service_type"
+
+# The Service Types in domain terms (CONTEXT.md). The picklist values of the org
+# belong to the Salesforce client, not here.
+SERVICE_TYPES = ("Consulting", "Development")
 
 _MISSING_PERSON = "Leistende Person"
+
+
+def load_default_service_type(conn: sqlite3.Connection) -> str:
+    """My global default for the Service Type; the first one until I choose."""
+    value = (repo.get_setting(conn, SETTINGS_SF_DEFAULT_SERVICE_TYPE, "") or "").strip()
+    return value if value in SERVICE_TYPES else SERVICE_TYPES[0]
+
+
+def save_default_service_type(conn: sqlite3.Connection, service_type: str) -> None:
+    if service_type not in SERVICE_TYPES:
+        raise ValueError(f"Unbekannter Service Type: {service_type}")
+    repo.set_setting(conn, SETTINGS_SF_DEFAULT_SERVICE_TYPE, service_type)
 
 
 @dataclass(slots=True, frozen=True)

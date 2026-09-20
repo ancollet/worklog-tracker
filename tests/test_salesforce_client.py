@@ -440,3 +440,73 @@ def test_org_error_while_listing_accounts_carries_the_salesforce_text():
         sf.SalesforceClient(_creds(), opener=transport).list_accounts_with_open_projects()
 
     assert "is not supported" in str(excinfo.value)
+
+
+# ---------- Offene Projekte eines Accounts (Registrieren) ----------
+
+
+def test_open_projects_of_an_account_returns_id_and_name():
+    transport = _FakeTransport(_token(), _query_result(
+        {"Id": "a0XAA000001AAAAIA2", "Name": "Relaunch"},
+        {"Id": "a0XAA000001BBBBIA2", "Name": "Wartung"},
+    ))
+
+    projects = sf.SalesforceClient(_creds(), opener=transport).list_open_projects("001AA000001AAAAIA2")
+
+    assert projects == [
+        sf.SalesforceProject(id="a0XAA000001AAAAIA2", name="Relaunch"),
+        sf.SalesforceProject(id="a0XAA000001BBBBIA2", name="Wartung"),
+    ]
+
+
+def test_open_projects_query_asks_for_the_open_projects_of_that_account_only():
+    transport = _FakeTransport(_token(), _query_result())
+
+    sf.SalesforceClient(_creds(), opener=transport).list_open_projects(" 001AA000001AAAAIA2 ")
+
+    # the org names are assumptions kept in one place; the query must be built from them
+    assert _soql(transport.requests[1]) == (
+        f"SELECT Id, {sf.PROJECT_NAME_FIELD} FROM {sf.PROJECT_OBJECT} "
+        f"WHERE {sf.PROJECT_ACCOUNT_FIELD} = '001AA000001AAAAIA2' "
+        f"AND {sf.PROJECT_STATUS_FIELD} IN ('{sf.PROJECT_OPEN_STATUSES[0]}') "
+        f"ORDER BY {sf.PROJECT_NAME_FIELD}"
+    )
+
+
+def test_account_id_cannot_break_out_of_the_string_literal():
+    transport = _FakeTransport(_token(), _query_result())
+
+    sf.SalesforceClient(_creds(), opener=transport).list_open_projects("x' OR Name != '")
+
+    assert f"{sf.PROJECT_ACCOUNT_FIELD} = 'x\\' OR Name != \\'' AND " in _soql(transport.requests[1])
+
+
+def test_account_without_open_projects_returns_an_empty_list():
+    transport = _FakeTransport(_token(), _query_result())
+
+    assert sf.SalesforceClient(_creds(), opener=transport).list_open_projects("001AA000001AAAAIA2") == []
+
+
+def test_blank_account_id_returns_nothing_without_asking_salesforce():
+    transport = _FakeTransport()
+
+    assert sf.SalesforceClient(_creds(), opener=transport).list_open_projects("  ") == []
+    assert transport.requests == []
+
+
+def test_network_error_while_listing_projects_raises_network_error():
+    transport = _FakeTransport(_token(), urllib.error.URLError("Network is unreachable"))
+
+    with pytest.raises(sf.SalesforceNetworkError):
+        sf.SalesforceClient(_creds(), opener=transport).list_open_projects("001AA000001AAAAIA2")
+
+
+def test_org_error_while_listing_projects_carries_the_salesforce_text():
+    transport = _FakeTransport(_token(), _http_error(400, [
+        {"message": "No such column 'Status__c' on entity 'Project__c'.", "errorCode": "INVALID_FIELD"},
+    ]))
+
+    with pytest.raises(sf.SalesforceOrgError) as excinfo:
+        sf.SalesforceClient(_creds(), opener=transport).list_open_projects("001AA000001AAAAIA2")
+
+    assert "No such column" in str(excinfo.value)

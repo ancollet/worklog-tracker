@@ -135,3 +135,27 @@ def test_loading_the_configuration_never_needs_the_network(conn, monkeypatch):
     sfs.save_leistende_person(conn, sfs.LeistendePerson("005A", "Anna Collet"))
 
     assert sfs.load_configuration(conn, get_secret=lambda: "s3cret").is_complete
+
+
+# ---------- Globaler Default für den Service Type ----------
+
+
+def test_default_service_type_is_consulting_until_i_choose_one(conn):
+    assert sfs.SERVICE_TYPES == ("Consulting", "Development")
+    assert sfs.load_default_service_type(conn) == "Consulting"
+
+
+def test_chosen_default_service_type_is_remembered(conn):
+    sfs.save_default_service_type(conn, "Development")
+
+    assert sfs.load_default_service_type(conn) == "Development"
+
+
+def test_unknown_service_type_is_refused_and_a_broken_setting_falls_back(conn):
+    import pytest
+
+    with pytest.raises(ValueError):
+        sfs.save_default_service_type(conn, "Training")
+
+    repo.set_setting(conn, sfs.SETTINGS_SF_DEFAULT_SERVICE_TYPE, "Training")
+    assert sfs.load_default_service_type(conn) == "Consulting"

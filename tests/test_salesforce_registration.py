@@ -248,7 +248,7 @@ def test_migration_from_v5_enforces_uniqueness_and_keeps_every_customer(tmp_path
 
     conn = db_module.connect(str(db_file))
     try:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == 7
+        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == db_module.SCHEMA_VERSION
         assert db_module.SCHEMA_VERSION >= 7
 
         by_name = {c.name: c for c in repo.list_customers(conn)}

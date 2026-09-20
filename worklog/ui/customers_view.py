@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
 from worklog import repository as repo
 from worklog.services import salesforce as sf_client
 from worklog.services import salesforce_registration as registration
-from worklog.services.salesforce_settings import SalesforceConfiguration, load_configuration
+from worklog.services.salesforce_settings import SERVICE_TYPES, SalesforceConfiguration, load_configuration
 
 ROUNDING_CHOICES = [
     ("Default", None),
@@ -71,6 +71,8 @@ class CustomersView(QWidget):
         self.archive_btn.clicked.connect(self.toggle_archive)
         self.register_account_btn = QPushButton("Salesforce-Account registrieren…")
         self.register_account_btn.clicked.connect(self.register_salesforce_account)
+        self.register_projects_btn = QPushButton("Projekte registrieren…")
+        self.register_projects_btn.clicked.connect(self.register_salesforce_projects)
 
         # right-side stacked detail: customer / project / empty
         self.detail_stack = QStackedWidget()
@@ -92,6 +94,7 @@ class CustomersView(QWidget):
         btn_row.addWidget(self.add_project_btn)
         btn_row.addWidget(self.archive_btn)
         btn_row.addWidget(self.register_account_btn)
+        btn_row.addWidget(self.register_projects_btn)
         btn_row.addStretch(1)
         left.addLayout(btn_row)
         outer.addLayout(left, 2)
@@ -101,6 +104,7 @@ class CustomersView(QWidget):
         self._current_customer_id: int | None = None
         self._current_project_id: int | None = None
         self._color_value: str | None = None
+        self._sf_missing_text = ""   # why Salesforce is unavailable; empty when the connection is complete
 
         self.refresh()
 
@@ -162,6 +166,25 @@ class CustomersView(QWidget):
         self.proj_external_ref_hint = QLabel("")
         self.proj_external_ref_hint.setStyleSheet("color: gray; font-size: 11px;")
         self.proj_external_ref_hint.setWordWrap(True)
+        # Projekte of Salesforce-Kunden: the connected Salesforce-Projekt by name instead of a
+        # free text field for its ID, plus what Buchungen of this Projekt start with.
+        self.proj_sf_label = QLabel("Salesforce-Projekt:")
+        self.proj_sf_name = QLabel("")
+        self.proj_sf_name.setWordWrap(True)
+        self.proj_sf_btn = QPushButton("Verbinden…")
+        self.proj_sf_btn.clicked.connect(self.connect_salesforce_project)
+        sf_row = QHBoxLayout()
+        sf_row.setContentsMargins(0, 0, 0, 0)
+        sf_row.addWidget(self.proj_sf_name, 1)
+        sf_row.addWidget(self.proj_sf_btn)
+        self.proj_sf_row = QWidget()
+        self.proj_sf_row.setLayout(sf_row)
+        self.proj_service_type_label = QLabel("Service Type:")
+        self.proj_service_type = QComboBox()
+        self.proj_service_type.addItems(SERVICE_TYPES)
+        self.proj_request_type_label = QLabel("Customer Request Type:")
+        self.proj_request_type = QLineEdit()
+        self.proj_request_type.setPlaceholderText("optional, z.B. SOT-00348")
         self.proj_archived = QCheckBox("Archiviert")
         self.proj_save_btn = QPushButton("Speichern")
         self.proj_save_btn.clicked.connect(self._save_project)
@@ -172,6 +195,9 @@ class CustomersView(QWidget):
         form.addRow("Farbe:", self.color_btn)
         form.addRow("Rundung:", self.proj_round)
         form.addRow(self.proj_external_ref_label, self.proj_external_ref)
+        form.addRow(self.proj_sf_label, self.proj_sf_row)
+        form.addRow(self.proj_service_type_label, self.proj_service_type)
+        form.addRow(self.proj_request_type_label, self.proj_request_type)
         form.addRow("", self.proj_external_ref_hint)
         form.addRow(self.proj_archived)
         form.addRow(self.proj_save_btn)
@@ -205,7 +231,7 @@ class CustomersView(QWidget):
                 pitem = QTreeWidgetItem([
                     p.name + (" (archiviert)" if p.archived else ""),
                     round_label,
-                    p.external_ref or "",
+                    registration.project_reference_text(p),   # never a Salesforce ID
                 ])
                 pitem.setData(0, Qt.ItemDataRole.UserRole, ("project", p.id))
                 if p.color:
@@ -213,6 +239,7 @@ class CustomersView(QWidget):
                 citem.addChild(pitem)
             citem.setExpanded(True)
         self._clear_detail()
+        self._update_register_projects_button()
         if self.isVisible():   # refresh() runs on every data change; the keyring is only asked when shown
             self._update_salesforce_availability()
 
@@ -284,6 +311,7 @@ class CustomersView(QWidget):
             self._load_project_detail(oid)
         else:
             self._clear_detail()
+        self._update_register_projects_button()
 
     def _load_customer_detail(self, customer_id: int) -> None:
         c = repo.get_customer(self.conn, customer_id)
@@ -315,7 +343,14 @@ class CustomersView(QWidget):
         self.color_btn.setText(proj.color or "Farbe wählen…")
         idx = self.proj_round.findData(proj.round_minutes)
         self.proj_round.setCurrentIndex(idx if idx >= 0 else 0)
-        self.proj_external_ref.setText(proj.external_ref or "")
+        self.proj_external_ref.setText(registration.project_ref_field_text(proj))
+        sf_project_text = (
+            registration.project_reference_text(proj) if proj.customer_booking_system == "salesforce" else ""
+        )
+        self.proj_sf_name.setText(sf_project_text or "(nicht verbunden)")
+        self.proj_sf_btn.setText("Ändern…" if sf_project_text else "Verbinden…")
+        self.proj_service_type.setCurrentText(registration.service_type_of(self.conn, proj))
+        self.proj_request_type.setText(proj.customer_request_type or "")
         self.proj_archived.setChecked(proj.archived)
         self._apply_project_external_ref_hint(proj.customer_booking_system)
         self.detail_stack.setCurrentIndex(2)
@@ -345,10 +380,19 @@ class CustomersView(QWidget):
         self.cust_account_hint.setVisible(show_account and bool(self.cust_account_hint.text()))
 
     def _apply_project_external_ref_hint(self, customer_system: str | None) -> None:
-        if customer_system == "salesforce":
-            self.proj_external_ref.setPlaceholderText("Salesforce Projekt-ID")
+        # Salesforce-Kunden: Anzeige des verbundenen Salesforce-Projekts plus "Verbinden…/Ändern…",
+        # Service Type und Customer Request Type — die Projekt-ID wird nie gezeigt oder getippt.
+        is_salesforce = customer_system == "salesforce"
+        for widget in (self.proj_external_ref_label, self.proj_external_ref):
+            widget.setVisible(not is_salesforce)
+        for widget in (self.proj_sf_label, self.proj_sf_row, self.proj_service_type_label,
+                       self.proj_service_type, self.proj_request_type_label, self.proj_request_type):
+            widget.setVisible(is_salesforce)
+        if is_salesforce:
+            self.proj_external_ref.setPlaceholderText("")
             self.proj_external_ref_hint.setText(
-                "Salesforce-Projekt-Referenz — Zeiten werden später als Related-List-Einträge dort gebucht."
+                self._sf_missing_text
+                or "Service Type und Customer Request Type sind die Vorbelegung beim Buchen in Salesforce."
             )
         elif customer_system == "jira":
             self.proj_external_ref.setPlaceholderText("(in Jira nicht nötig — Issue-Key wird im Log gesetzt)")
@@ -395,6 +439,10 @@ class CustomersView(QWidget):
         if not name:
             QMessageBox.warning(self, "Fehler", "Name darf nicht leer sein.")
             return
+        stored = repo.get_project(self.conn, self._current_project_id)
+        if stored is None:
+            self.refresh()
+            return
         try:
             repo.update_project(
                 self.conn, self._current_project_id,
@@ -402,11 +450,20 @@ class CustomersView(QWidget):
                 color=self._color_value,
                 round_minutes=self.proj_round.currentData(),
                 archived=self.proj_archived.isChecked(),
-                external_ref=self.proj_external_ref.text().strip() or None,
+                external_ref=registration.project_ref_to_save(stored, self.proj_external_ref.text()),
             )
         except sqlite3.IntegrityError:
             QMessageBox.warning(self, "Fehler", "Projektname existiert beim Kunden bereits.")
             return
+        if stored.customer_booking_system == "salesforce":
+            try:
+                registration.change_booking_defaults(
+                    self.conn, stored.id,
+                    self.proj_service_type.currentText(), self.proj_request_type.text(),
+                )
+            except registration.RegistrationError as exc:
+                QMessageBox.warning(self, "Fehler", str(exc))
+                return
         self.refresh()
         self.changed.emit()
 
@@ -429,22 +486,72 @@ class CustomersView(QWidget):
         self.cust_account_btn.setToolTip("" if available else missing)
         self.cust_account_hint.setText("" if available else missing)
         self._apply_customer_system_visibility(self.cust_system.currentData())
+        self._sf_missing_text = missing
+        self.proj_sf_btn.setEnabled(available)
+        self.proj_sf_btn.setToolTip("" if available else missing)
+        self._update_register_projects_button()
         return config
 
-    def _choose_salesforce_account(self, apply, *, title: str, action_label: str) -> None:
+    def _update_register_projects_button(self) -> None:
+        """"Projekte registrieren…" belongs to a Salesforce-Kunde and needs the connection."""
+        customer_id = self._selected_customer_id()
+        customer = repo.get_customer(self.conn, customer_id) if customer_id is not None else None
+        if self._sf_missing_text:
+            enabled, tip = False, self._sf_missing_text
+        elif customer is None or customer.booking_system != "salesforce":
+            enabled, tip = False, "Zuerst einen Salesforce-Kunden (oder eines seiner Projekte) auswählen."
+        elif not customer.external_ref:
+            enabled, tip = False, "Der Kunde ist noch nicht mit einem Salesforce-Account verbunden."
+        else:
+            enabled, tip = True, f"Offene Salesforce-Projekte von „{customer.name}“ als Projekte registrieren."
+        self.register_projects_btn.setEnabled(enabled)
+        self.register_projects_btn.setToolTip(tip)
+
+    def _choose_from_salesforce(self, *, load, choices, apply, texts, new_registration=None) -> None:
         config = self._update_salesforce_availability()
         if not config.is_connection_complete or config.credentials is None:
             QMessageBox.information(self, "Salesforce", config.connection_missing_text)
             return
-        from worklog.ui.salesforce_account_dialog import SalesforceAccountDialog
-        dlg = SalesforceAccountDialog(
-            self.conn, config.credentials, apply,
-            title=title, action_label=action_label,
+        from worklog.ui.salesforce_choice_dialog import SalesforceChoiceDialog
+        dlg = SalesforceChoiceDialog(
+            config.credentials,
+            load=load, choices=choices, apply=apply, texts=texts, new_registration=new_registration,
             client_factory=self._sf_client_factory, parent=self,
         )
         if dlg.exec():
             self.refresh()
             self.changed.emit()
+
+    def _choose_salesforce_account(self, apply, *, title: str, action_label: str) -> None:
+        from worklog.ui.salesforce_choice_dialog import account_texts
+        self._choose_from_salesforce(
+            load=lambda client: client.list_accounts_with_open_projects(),
+            choices=lambda accounts: registration.account_choices(self.conn, accounts),
+            apply=apply,
+            texts=account_texts(title=title, action_label=action_label),
+        )
+
+    def _choose_salesforce_projects(self, customer_id: int, apply, *, title: str, action_label: str,
+                                    several: bool) -> None:
+        customer = repo.get_customer(self.conn, customer_id)
+        if customer is None or customer.booking_system != "salesforce" or not customer.external_ref:
+            QMessageBox.information(
+                self, "Salesforce",
+                "Der Kunde ist noch nicht mit einem Salesforce-Account verbunden. "
+                "Zuerst den Kunden auswählen und dort „Verbinden…“ wählen.",
+            )
+            return
+        from worklog.ui.salesforce_choice_dialog import project_texts
+        account_id = customer.external_ref   # stays in the background, only the client sees it
+        self._choose_from_salesforce(
+            load=lambda client: client.list_open_projects(account_id),
+            choices=lambda projects: registration.project_choices(self.conn, projects),
+            apply=apply,
+            texts=project_texts(customer.name, title=title, action_label=action_label),
+            new_registration=(
+                (lambda project: registration.new_project_registration(self.conn, project)) if several else None
+            ),
+        )
 
     def register_salesforce_account(self) -> None:
         self._choose_salesforce_account(
@@ -459,6 +566,26 @@ class CustomersView(QWidget):
         self._choose_salesforce_account(
             lambda account: registration.connect_customer(self.conn, customer_id, account),
             title="Kunde mit Salesforce-Account verbinden", action_label="Verbinden",
+        )
+
+    def register_salesforce_projects(self) -> None:
+        customer_id = self._selected_customer_id()
+        if customer_id is None:
+            return
+        self._choose_salesforce_projects(
+            customer_id,
+            lambda registrations: registration.register_projects(self.conn, customer_id, registrations),
+            title="Projekte registrieren", action_label="Registrieren", several=True,
+        )
+
+    def connect_salesforce_project(self) -> None:
+        project = repo.get_project(self.conn, self._current_project_id) if self._current_project_id else None
+        if project is None:
+            return
+        self._choose_salesforce_projects(
+            project.customer_id,
+            lambda salesforce_project: registration.connect_project(self.conn, project.id, salesforce_project),
+            title="Projekt mit Salesforce-Projekt verbinden", action_label="Verbinden", several=False,
         )
 
     def _pick_color(self) -> None:

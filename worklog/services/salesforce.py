@@ -25,6 +25,7 @@ API_VERSION = "v64.0"
 # (spec.md, offener Recherchepunkt 2). Nothing else in the app knows these names;
 # correcting them means changing exactly these lines.
 PROJECT_OBJECT = "Project__c"                # API name of the Salesforce-Projekt object
+PROJECT_NAME_FIELD = "Name"                  # display name of the Projekt
 PROJECT_ACCOUNT_FIELD = "Account__c"         # lookup from the Projekt to its Account
 PROJECT_STATUS_FIELD = "Status__c"           # status picklist on the Projekt
 PROJECT_OPEN_STATUSES = ("Open",)            # status values that mean "offen"
@@ -71,6 +72,14 @@ class ActiveUser:
 @dataclass(slots=True, frozen=True)
 class SalesforceAccount:
     """An Account of the org that can be registriert as a Kunde."""
+
+    id: str
+    name: str
+
+
+@dataclass(slots=True, frozen=True)
+class SalesforceProject:
+    """An offenes Salesforce-Projekt of an Account that can be registriert as a Projekt."""
 
     id: str
     name: str
@@ -186,6 +195,22 @@ class SalesforceClient:
             "ORDER BY Name"
         )
         return [SalesforceAccount(id=str(r["Id"]), name=str(r.get("Name") or "")) for r in records]
+
+    def list_open_projects(self, account_id: str) -> list[SalesforceProject]:
+        """The offenen Salesforce-Projekte of one Account, sorted by name."""
+        account_id = account_id.strip()
+        if not account_id:
+            return []
+        records = self._query(
+            f"SELECT Id, {PROJECT_NAME_FIELD} FROM {PROJECT_OBJECT} "
+            f"WHERE {PROJECT_ACCOUNT_FIELD} = '{_escape_soql(account_id)}' "
+            f"AND {_open_project_condition()} "
+            f"ORDER BY {PROJECT_NAME_FIELD}"
+        )
+        return [
+            SalesforceProject(id=str(r["Id"]), name=str(r.get(PROJECT_NAME_FIELD) or ""))
+            for r in records
+        ]
 
     def _query(self, soql: str) -> list[dict]:
         """Run one SOQL query (GET .../query?q=...) and return all its records.
