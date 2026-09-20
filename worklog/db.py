@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
 from worklog.paths import db_path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 INITIAL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -86,6 +87,20 @@ CREATE TABLE IF NOT EXISTS log_entry_flag (
 CREATE INDEX IF NOT EXISTS idx_log_entry_flag_log ON log_entry_flag(log_id);
 """
 
+# Not part of INITIAL_SCHEMA: the start snippets are seeded exactly once, when
+# this table is created (fresh DB or migration to v6). A user who deletes them
+# must not get them back on the next start.
+SNIPPET_SCHEMA = """
+CREATE TABLE snippet (
+    id          INTEGER PRIMARY KEY,
+    text        TEXT NOT NULL UNIQUE,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+);
+"""
+
+START_SNIPPETS = ("Codereview", "Entwicklung", "Istanalyse", "Recherche")
+
 _LEGACY_DEFAULT_FLAG_NAMES = ("gebucht", "invoiced", "canceled")
 
 BOOKING_SYSTEMS = ("jira", "salesforce")
@@ -94,6 +109,24 @@ BOOKING_SYSTEMS = ("jira", "salesforce")
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     return any(r["name"] == column for r in rows)
+
+
+def _has_table(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+    ).fetchone()
+    return row is not None
+
+
+def _create_snippet_table(conn: sqlite3.Connection) -> None:
+    if _has_table(conn, "snippet"):
+        return
+    conn.executescript(SNIPPET_SCHEMA)
+    now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    conn.executemany(
+        "INSERT INTO snippet(text, sort_order, created_at) VALUES (?, ?, ?)",
+        [(text, order, now) for order, text in enumerate(START_SNIPPETS)],
+    )
 
 
 def connect(path: Path | str | None = None) -> sqlite3.Connection:
@@ -117,6 +150,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "INSERT OR IGNORE INTO app_state(id, running_log_id, last_project_id, default_round_minutes) "
             "VALUES (1, NULL, NULL, 15)"
         )
+        _create_snippet_table(conn)
     elif current < SCHEMA_VERSION:
         if current < 3:
             # v2 introduced auto-seeded flags; v3 removes them again. Drop the
@@ -142,6 +176,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
             for col in ("external_worklog_id", "external_worklog_url", "external_synced_at"):
                 if not _has_column(conn, "log_entry", col):
                     conn.execute(f"ALTER TABLE log_entry ADD COLUMN {col} TEXT")
+        if current < 6:
+            _create_snippet_table(conn)
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
 

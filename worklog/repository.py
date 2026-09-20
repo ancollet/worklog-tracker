@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Iterable, Optional
 
-from worklog.models import AppState, Customer, Flag, LogEntry, Project
+from worklog.models import AppState, Customer, Flag, LogEntry, Project, Snippet
 
 
 def _now_iso() -> str:
@@ -597,3 +597,67 @@ def set_setting(conn: sqlite3.Connection, key: str, value: Optional[str]) -> Non
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, value),
     )
+
+
+# ---------- Snippets ----------
+
+def _row_to_snippet(row: sqlite3.Row) -> Snippet:
+    return Snippet(
+        id=row["id"],
+        text=row["text"],
+        sort_order=row["sort_order"],
+        created_at=_parse_dt(row["created_at"]),
+    )
+
+
+class SnippetTextError(ValueError):
+    """Snippet text is empty or already exists (case-insensitive)."""
+
+
+def _checked_snippet_text(
+    conn: sqlite3.Connection, text: str, *, ignore_id: Optional[int] = None
+) -> str:
+    cleaned = text.strip()
+    if not cleaned:
+        raise SnippetTextError("Snippet-Text darf nicht leer sein.")
+    for other in list_snippets(conn):
+        if other.id != ignore_id and other.text.casefold() == cleaned.casefold():
+            raise SnippetTextError("Snippet mit diesem Text existiert bereits.")
+    return cleaned
+
+
+def list_snippets(conn: sqlite3.Connection) -> list[Snippet]:
+    rows = conn.execute("SELECT * FROM snippet ORDER BY sort_order, id").fetchall()
+    return [_row_to_snippet(r) for r in rows]
+
+
+def create_snippet(conn: sqlite3.Connection, *, text: str) -> Snippet:
+    """Create a snippet at the end of the list."""
+    cleaned = _checked_snippet_text(conn, text)
+    next_order = conn.execute(
+        "SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM snippet"
+    ).fetchone()["next_order"]
+    cur = conn.execute(
+        "INSERT INTO snippet(text, sort_order, created_at) VALUES (?, ?, ?)",
+        (cleaned, next_order, _now_iso()),
+    )
+    sid = cur.lastrowid
+    return _row_to_snippet(conn.execute("SELECT * FROM snippet WHERE id = ?", (sid,)).fetchone())
+
+
+def rename_snippet(conn: sqlite3.Connection, snippet_id: int, *, text: str) -> None:
+    """Change the text. Existing descriptions are untouched: snippets are plain text."""
+    cleaned = _checked_snippet_text(conn, text, ignore_id=snippet_id)
+    conn.execute("UPDATE snippet SET text = ? WHERE id = ?", (cleaned, snippet_id))
+
+
+def reorder_snippets(conn: sqlite3.Connection, snippet_ids: list[int]) -> None:
+    """Persist the given order (first id first)."""
+    conn.executemany(
+        "UPDATE snippet SET sort_order = ? WHERE id = ?",
+        [(order, sid) for order, sid in enumerate(snippet_ids)],
+    )
+
+
+def delete_snippet(conn: sqlite3.Connection, snippet_id: int) -> None:
+    conn.execute("DELETE FROM snippet WHERE id = ?", (snippet_id,))

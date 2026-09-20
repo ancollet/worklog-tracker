@@ -36,6 +36,7 @@ from worklog.ui.completers import (
     refresh_task_completer,
 )
 from worklog.ui.entry_context_menu import build_entry_context_menu, keep_selection_on_right_click
+from worklog.ui.snippet_button import with_snippet_button
 
 CLOCKWORK_URL = (
     "https://igusdev.atlassian.net/plugins/servlet/ac/clockwork-free-cloud/clockwork-mywork"
@@ -419,7 +420,7 @@ class TimerWidget(QWidget):
 
         row3 = QHBoxLayout()
         row3.addWidget(QLabel("Beschr.:"))
-        row3.addWidget(self.desc_input, 1)
+        row3.addWidget(with_snippet_button(conn, self.desc_input), 1)
         outer.addLayout(row3)
 
         timer_row = QHBoxLayout()
