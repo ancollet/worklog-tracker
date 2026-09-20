@@ -1,8 +1,9 @@
-"""Registrieren: einen Salesforce-Account als Kunden in die App übernehmen (CONTEXT.md).
+"""Registrieren: einen Salesforce-Account als Kunden bzw. seine offenen Salesforce-Projekte
+als Projekte in die App übernehmen (CONTEXT.md).
 
-Qt-free. The dialog only shows what this module decides: which Accounts are
-already registriert, what is stored, and why something is refused.
-The Account-ID stays in the background — nothing here is meant to display it.
+Qt-free. The dialog only shows what this module decides: which Accounts and
+Salesforce-Projekte are already registriert, what is stored, and why something is refused.
+The Salesforce IDs stay in the background — nothing here is meant to display them.
 """
 from __future__ import annotations
 
@@ -12,8 +13,9 @@ from typing import Optional
 
 from worklog import repository as repo
 from worklog.db import transaction
-from worklog.models import Customer
-from worklog.services.salesforce import SalesforceAccount
+from worklog.models import Customer, Project
+from worklog.services.salesforce import SalesforceAccount, SalesforceProject
+from worklog.services.salesforce_settings import SERVICE_TYPES, load_default_service_type
 
 
 class RegistrationError(RuntimeError):
@@ -101,6 +103,19 @@ class AccountChoice:
     def is_registered(self) -> bool:
         return bool(self.registered_as)
 
+    # What the selection dialog needs of any kind of choice: record, name, registered_text.
+    @property
+    def record(self) -> SalesforceAccount:
+        return self.account
+
+    @property
+    def name(self) -> str:
+        return self.account.name
+
+    @property
+    def registered_text(self) -> str:
+        return f"bereits registriert (Kunde „{self.registered_as}“)" if self.registered_as else ""
+
 
 def account_choices(conn: sqlite3.Connection, accounts: list[SalesforceAccount]) -> list[AccountChoice]:
     """The Accounts from Salesforce, each marked if it is already registriert."""
@@ -142,3 +157,231 @@ def register_account(conn: sqlite3.Connection, account: SalesforceAccount) -> Cu
             conn, customer.id, account_id=account.id, account_name=account.name
         )
     return repo.get_customer(conn, customer.id)
+
+
+# ---------- Projekte registrieren ----------
+
+
+class ProjectAlreadyRegisteredError(RegistrationError):
+    """The Salesforce-Projekt already hangs on a Projekt."""
+
+    def __init__(self, project: Project) -> None:
+        super().__init__(
+            f"Das Salesforce-Projekt ist bereits registriert (Projekt „{_project_display_name(project)}“)."
+        )
+        self.project = project
+
+
+class ProjectNameTakenError(RegistrationError):
+    """The Kunde already has a Projekt with the name of the Salesforce-Projekt (created by hand)."""
+
+    def __init__(self, project: Project) -> None:
+        super().__init__(
+            f"Der Kunde hat bereits ein Projekt „{_project_display_name(project)}“. Um es mit diesem "
+            "Salesforce-Projekt zu verbinden, das Projekt auswählen und dort „Verbinden…“ wählen."
+        )
+        self.project = project
+
+
+def _project_display_name(project: Project) -> str:
+    return project.name + (" (archiviert)" if project.archived else "")
+
+
+def registered_project(conn: sqlite3.Connection, salesforce_project_id: str) -> Optional[Project]:
+    """The Projekt this Salesforce-Projekt is registriert as — archived ones count too."""
+    for project in repo.list_projects(conn, include_archived=True):
+        if (project.customer_booking_system == "salesforce" and project.external_ref
+                and _same_account(project.external_ref, salesforce_project_id)):
+            return project
+    return None
+
+
+@dataclass(slots=True, frozen=True)
+class ProjectChoice:
+    """One row of the selection list: a Salesforce-Projekt and whether it can still be registriert."""
+
+    project: SalesforceProject
+    registered_as: str = ""   # display name of the Projekt it is registriert as; empty if free
+
+    @property
+    def is_registered(self) -> bool:
+        return bool(self.registered_as)
+
+    @property
+    def record(self) -> SalesforceProject:
+        return self.project
+
+    @property
+    def name(self) -> str:
+        return self.project.name
+
+    @property
+    def registered_text(self) -> str:
+        return f"bereits registriert (Projekt „{self.registered_as}“)" if self.registered_as else ""
+
+
+def project_choices(conn: sqlite3.Connection, projects: list[SalesforceProject]) -> list[ProjectChoice]:
+    """The offenen Salesforce-Projekte of an Account, each marked if it is already registriert."""
+    choices = []
+    for project in projects:
+        existing = registered_project(conn, project.id)
+        choices.append(ProjectChoice(project, _project_display_name(existing) if existing else ""))
+    return choices
+
+
+@dataclass(slots=True, frozen=True)
+class ProjectRegistration:
+    """One Salesforce-Projekt chosen for Registrieren, with the settings of the new Projekt."""
+
+    project: SalesforceProject
+    service_type: str
+    customer_request_type: str = ""
+
+
+def new_project_registration(conn: sqlite3.Connection, project: SalesforceProject) -> ProjectRegistration:
+    """What the selection dialog starts a row with: my global default Service Type, no Customer Request Type."""
+    return ProjectRegistration(project, load_default_service_type(conn))
+
+
+def _salesforce_customer(conn: sqlite3.Connection, customer_id: int) -> Customer:
+    customer = repo.get_customer(conn, customer_id)
+    if customer is None:
+        raise RegistrationError("Der Kunde existiert nicht mehr.")
+    if customer.booking_system != "salesforce":
+        raise RegistrationError(
+            f"„{_display_name(customer)}“ ist kein Salesforce-Kunde. Zuerst den Kunden mit seinem "
+            "Salesforce-Account verbinden."
+        )
+    return customer
+
+
+def _checked_service_type(service_type: str) -> str:
+    if service_type not in SERVICE_TYPES:
+        raise RegistrationError(
+            f"Unbekannter Service Type „{service_type}“ — möglich sind: " + ", ".join(SERVICE_TYPES) + "."
+        )
+    return service_type
+
+
+def register_projects(
+    conn: sqlite3.Connection, customer_id: int, registrations: list[ProjectRegistration]
+) -> list[Project]:
+    """Register the chosen Salesforce-Projekte: exactly one new Projekt each under the Kunde.
+
+    All or nothing — if one of them is refused, none is created.
+    """
+    customer = _salesforce_customer(conn, customer_id)
+    own_projects = {
+        p.name: p for p in repo.list_projects(conn, include_archived=True) if p.customer_id == customer.id
+    }
+    chosen: list[SalesforceProject] = []
+    for registration in registrations:
+        _checked_service_type(registration.service_type)
+        existing = registered_project(conn, registration.project.id)
+        if existing is not None:
+            raise ProjectAlreadyRegisteredError(existing)
+        if any(_same_account(registration.project.id, other.id) for other in chosen):
+            raise RegistrationError(f"„{registration.project.name}“ ist doppelt ausgewählt.")
+        if registration.project.name in own_projects:
+            raise ProjectNameTakenError(own_projects[registration.project.name])
+        if any(registration.project.name == other.name for other in chosen):
+            raise RegistrationError(
+                f"Zwei der gewählten Salesforce-Projekte heißen „{registration.project.name}“. "
+                "Bitte einzeln registrieren und das zuerst registrierte Projekt umbenennen."
+            )
+        chosen.append(registration.project)
+    created = []
+    with transaction(conn):
+        for registration in registrations:
+            project = repo.create_project(conn, customer_id=customer.id, name=registration.project.name)
+            repo.set_project_salesforce_project(
+                conn, project.id,
+                salesforce_project_id=registration.project.id,
+                salesforce_project_name=registration.project.name,
+            )
+            repo.set_project_booking_defaults(
+                conn, project.id,
+                default_service_type=registration.service_type,
+                customer_request_type=registration.customer_request_type.strip(),
+            )
+            created.append(project.id)
+    return [repo.get_project(conn, project_id) for project_id in created]
+
+
+def connect_project(conn: sqlite3.Connection, project_id: int, salesforce_project: SalesforceProject) -> Project:
+    """Connect an existing Projekt of a Salesforce-Kunde with the Salesforce-Projekt (or change it).
+
+    Name, colour, rounding and Einträge stay as they are. A Projekt without a
+    Service Type yet gets my global default.
+    """
+    project = repo.get_project(conn, project_id)
+    if project is None:
+        raise RegistrationError("Das Projekt existiert nicht mehr.")
+    _salesforce_customer(conn, project.customer_id)
+    existing = registered_project(conn, salesforce_project.id)
+    if existing is not None and existing.id != project.id:
+        raise ProjectAlreadyRegisteredError(existing)
+    with transaction(conn):
+        repo.set_project_salesforce_project(
+            conn, project.id,
+            salesforce_project_id=salesforce_project.id,
+            salesforce_project_name=salesforce_project.name,
+        )
+        if project.default_service_type not in SERVICE_TYPES:
+            repo.set_project_booking_defaults(
+                conn, project.id,
+                default_service_type=load_default_service_type(conn),
+                customer_request_type=project.customer_request_type,
+            )
+    return repo.get_project(conn, project.id)
+
+
+def change_booking_defaults(
+    conn: sqlite3.Connection, project_id: int, service_type: str, customer_request_type: str
+) -> Project:
+    """Change Service Type and Customer Request Type of a Projekt; an empty Customer Request Type removes it."""
+    project = repo.get_project(conn, project_id)
+    if project is None:
+        raise RegistrationError("Das Projekt existiert nicht mehr.")
+    repo.set_project_booking_defaults(
+        conn, project.id,
+        default_service_type=_checked_service_type(service_type),
+        customer_request_type=customer_request_type.strip(),
+    )
+    return repo.get_project(conn, project.id)
+
+
+def service_type_of(conn: sqlite3.Connection, project: Project) -> str:
+    """The Default-Service-Type of the Projekt; my global default while it has none of its own."""
+    if project.default_service_type in SERVICE_TYPES:
+        return project.default_service_type
+    return load_default_service_type(conn)
+
+
+def project_reference_text(project: Project) -> str:
+    """What the UI shows as the external reference of a Projekt — never a Salesforce ID.
+
+    Projekte of Salesforce-Kunden show the name of the connected Salesforce-Projekt;
+    everyone else the reference as typed.
+    """
+    if project.customer_booking_system != "salesforce":
+        return project.external_ref or ""
+    if not project.external_ref:
+        return ""
+    # Typed by hand before Registrieren existed: the name of the Salesforce-Projekt is unknown.
+    return project.external_name or "Salesforce-Projekt verbunden"
+
+
+def project_ref_field_text(project: Project) -> str:
+    """Initial content of the free text field in the Projekt-Details — empty for Salesforce-Kunden."""
+    return "" if project.customer_booking_system == "salesforce" else (project.external_ref or "")
+
+
+def project_ref_to_save(stored: Project, typed_ref: str) -> Optional[str]:
+    """The external reference to store when the Projekt-Details are saved.
+
+    For a Projekt of a Salesforce-Kunde the ID only ever comes from Registrieren/Verbinden.
+    """
+    if stored.customer_booking_system == "salesforce":
+        return stored.external_ref
+    return typed_ref.strip() or None

@@ -44,6 +44,9 @@ def _row_to_project(row: sqlite3.Row) -> Project:
         created_at=_parse_dt(row["created_at"]),
         customer_name=row["customer_name"] if "customer_name" in keys else None,
         customer_booking_system=row["customer_booking_system"] if "customer_booking_system" in keys else None,
+        external_name=row["external_name"] if "external_name" in keys else None,
+        default_service_type=row["default_service_type"] if "default_service_type" in keys else None,
+        customer_request_type=row["customer_request_type"] if "customer_request_type" in keys else None,
     )
 
 
@@ -193,6 +196,37 @@ def update_project(
     conn.execute(
         "UPDATE project SET name = ?, color = ?, round_minutes = ?, external_ref = ?, archived = ? WHERE id = ?",
         (name, color, round_minutes, external_ref, int(archived), project_id),
+    )
+
+
+def set_project_salesforce_project(
+    conn: sqlite3.Connection,
+    project_id: int,
+    *,
+    salesforce_project_id: str,
+    salesforce_project_name: str,
+) -> None:
+    """Connect the Projekt with a Salesforce-Projekt.
+
+    Raises sqlite3.IntegrityError if the ID already hangs on another Projekt of a Salesforce-Kunde.
+    """
+    conn.execute(
+        "UPDATE project SET external_ref = ?, external_name = ? WHERE id = ?",
+        (salesforce_project_id, salesforce_project_name or None, project_id),
+    )
+
+
+def set_project_booking_defaults(
+    conn: sqlite3.Connection,
+    project_id: int,
+    *,
+    default_service_type: Optional[str],
+    customer_request_type: Optional[str],
+) -> None:
+    """Service Type and Customer Request Type that Buchungen of this Projekt start with."""
+    conn.execute(
+        "UPDATE project SET default_service_type = ?, customer_request_type = ? WHERE id = ?",
+        (default_service_type or None, customer_request_type or None, project_id),
     )
 
 

@@ -9,7 +9,7 @@ from typing import Iterator
 
 from worklog.paths import db_path
 
-SCHEMA_VERSION = 7  # 6 = Snippets, 7 = Salesforce-Account registrieren
+SCHEMA_VERSION = 8  # 6 = Snippets, 7 = Salesforce-Account registrieren, 8 = Projekte registrieren
 
 INITIAL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -152,6 +152,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
         _create_snippet_table(conn)
         _migrate_to_7_salesforce_account(conn)
+        _migrate_to_8_salesforce_projects(conn)
     elif current < SCHEMA_VERSION:
         if current < 3:
             # v2 introduced auto-seeded flags; v3 removes them again. Drop the
@@ -181,6 +182,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
             _create_snippet_table(conn)
         if current < 7:
             _migrate_to_7_salesforce_account(conn)
+        if current < 8:
+            _migrate_to_8_salesforce_projects(conn)
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
 
@@ -233,3 +236,94 @@ def _migrate_to_7_salesforce_account(conn: sqlite3.Connection) -> None:
         WHERE booking_system = 'salesforce' AND external_ref IS NOT NULL AND external_ref <> ''
         """
     )
+
+
+# ---------- Schritt "→ 8": Projekte registrieren ----------
+
+# Trigger condition "another Projekt of a Salesforce-Kunde already has NEW's reference".
+# `not_self` excludes the row itself on UPDATE; on INSERT the new row has no id yet.
+_SALESFORCE_PROJECT_TAKEN = """
+    NEW.external_ref IS NOT NULL AND NEW.external_ref <> ''
+    AND (SELECT booking_system FROM customer WHERE id = NEW.customer_id) = 'salesforce'
+    AND EXISTS (
+        SELECT 1 FROM project other
+        JOIN customer c ON c.id = other.customer_id
+        WHERE c.booking_system = 'salesforce'
+          AND other.external_ref = NEW.external_ref
+          {not_self}
+    )
+"""
+
+# Of several Projekte of Salesforce-Kunden with the same reference the oldest keeps it
+# (`keeper` says which other Projekt wins; Projekte of a Kunde that only now becomes a
+# Salesforce-Kunde always lose against those that were there before).
+_DROP_TAKEN_SALESFORCE_PROJECT_REFS = """
+    UPDATE project SET external_ref = NULL, external_name = NULL
+    WHERE external_ref IS NOT NULL AND external_ref <> '' {scope}
+      AND (SELECT booking_system FROM customer WHERE id = project.customer_id) = 'salesforce'
+      AND EXISTS (
+          SELECT 1 FROM project older
+          JOIN customer c ON c.id = older.customer_id
+          WHERE c.booking_system = 'salesforce'
+            AND older.external_ref = project.external_ref
+            AND {keeper}
+      )
+"""
+
+
+def _migrate_to_8_salesforce_projects(conn: sqlite3.Connection) -> None:
+    """Per-Projekt settings for Buchen, and: eine Salesforce-Projekt-ID hängt nur an einem Projekt.
+
+    Idempotent and independent of every other step; runs for fresh databases too.
+
+    New columns on the Projekt: Default-Service-Type, Customer Request Type and
+    `external_name`, the name of the connected Salesforce-Projekt, so the UI can
+    show it instead of the ID even after the Projekt was renamed.
+
+    Uniqueness (leere Werte ausgenommen) covers only Projekte of Salesforce-Kunden;
+    for everyone else the external reference stays free text that may repeat. The
+    Buchungssystem sits on the Kunde, which a partial index cannot see — hence
+    triggers. A Kunde that becomes a Salesforce-Kunde later keeps its Projekte,
+    but a reference that is already taken is dropped from them.
+
+    Hand-typed duplicates from before: the oldest Projekt keeps the ID, the others
+    stay (with their Einträge) but lose it and can be connected again in the Kunden-Tab.
+    """
+    for column in ("default_service_type", "customer_request_type", "external_name"):
+        if not _has_column(conn, "project", column):
+            conn.execute(f"ALTER TABLE project ADD COLUMN {column} TEXT")
+    conn.execute(_DROP_TAKEN_SALESFORCE_PROJECT_REFS.format(scope="", keeper="older.id < project.id"))
+    conn.execute(
+        f"""
+        CREATE TRIGGER IF NOT EXISTS trg_project_salesforce_ref_insert
+        BEFORE INSERT ON project
+        WHEN {_SALESFORCE_PROJECT_TAKEN.format(not_self="")}
+        BEGIN
+            SELECT RAISE(ABORT, 'UNIQUE constraint failed: project.external_ref (Salesforce-Projekt)');
+        END
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TRIGGER IF NOT EXISTS trg_project_salesforce_ref_update
+        BEFORE UPDATE OF external_ref, customer_id ON project
+        WHEN {_SALESFORCE_PROJECT_TAKEN.format(not_self="AND other.id <> NEW.id")}
+        BEGIN
+            SELECT RAISE(ABORT, 'UNIQUE constraint failed: project.external_ref (Salesforce-Projekt)');
+        END
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TRIGGER IF NOT EXISTS trg_customer_becomes_salesforce
+        AFTER UPDATE OF booking_system ON customer
+        WHEN NEW.booking_system = 'salesforce' AND OLD.booking_system IS NOT 'salesforce'
+        BEGIN
+            {_DROP_TAKEN_SALESFORCE_PROJECT_REFS.format(
+                scope="AND project.customer_id = NEW.id",
+                keeper="(older.customer_id <> NEW.id OR older.id < project.id)",
+            )};
+        END
+        """
+    )
+

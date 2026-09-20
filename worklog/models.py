@@ -29,6 +29,9 @@ class Project:
     created_at: Optional[datetime] = None
     customer_name: Optional[str] = None  # joined view
     customer_booking_system: Optional[str] = None  # joined view
+    external_name: Optional[str] = None          # name of the connected Salesforce-Projekt (shown instead of the ID)
+    default_service_type: Optional[str] = None   # Service Type preset for Buchungen of this Projekt
+    customer_request_type: Optional[str] = None  # Customer Request Type (free text, optional)
 
     @property
     def display_name(self) -> str:

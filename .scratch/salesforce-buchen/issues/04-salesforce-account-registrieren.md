@@ -15,7 +15,7 @@ Spec: `.scratch/salesforce-buchen/spec.md` (Stories 9–13, 20, 23). Begriff: "R
 - [x] Eine Account-ID kann nur an einem Kunden hängen (leere Werte ausgenommen); das ist auf Datenebene durchgesetzt, inkl. Migration bestehender Datenbanken.
 - [x] Ein bestehender Kunde lässt sich über "Verbinden…/Ändern…" mit einem Account verbinden; dabei wird sein Buchungssystem auf Salesforce gesetzt, Projekte und Einträge bleiben erhalten.
 - [x] Bei Salesforce-Kunden ist das freie Textfeld für die externe Referenz durch die Anzeige des verbundenen Accounts ersetzt; bei Jira-Kunden und Kunden ohne Buchungssystem bleibt alles wie heute.
-- [ ] Salesforce-IDs sind nirgends in der UI sichtbar oder einzutippen.
+- [x] Salesforce-IDs sind nirgends in der UI sichtbar oder einzutippen.
 - [x] Ohne Verbindung ist die Funktion deaktiviert bzw. meldet den Fehler; der Kunden-Tab selbst funktioniert offline unverändert.
 - [x] Tests: Client-Abfrage mit gefälschtem HTTP (Treffer, leer, Fehler); Registrieren legt den Kunden korrekt an; Doppelregistrierung abgelehnt; nachträgliches Verbinden erhält Projekte und Einträge; Migration.
 
@@ -25,3 +25,4 @@ Spec: `.scratch/salesforce-buchen/spec.md` (Stories 9–13, 20, 23). Begriff: "R
 - Org-Namen (`Project__c`, `Account__c`, `Status__c`, offen = `Open`) sind Annahmen, als Konstanten oben in `worklog/services/salesforce.py`; in Ticket 03 gegen die Sandbox zu bestätigen.
 - Schema-Schritt "→ 7" (unabhängig von Schritt 6/Snippets): partieller Unique-Index auf der Account-ID von Salesforce-Kunden plus Spalte `customer.external_name` (Name des verbundenen Accounts für die Anzeige). Von Hand doppelt eingetragene Account-IDs: der älteste Kunde behält den Account, die übrigen bleiben mit Projekten und Einträgen erhalten, verlieren aber die ID.
 - Die UI ist nicht gegen eine echte Org abgenommen (Ticket 11).
+- Nachtrag aus Ticket 05: Auch bei Projekten von Salesforce-Kunden ist die ID jetzt weder sichtbar noch einzutippen (Baumspalte und Details zeigen den Namen des Salesforce-Projekts; die ID kommt nur aus Registrieren/Verbinden). Per Offscreen-Smoke-Test geprüft, Kriterium abgehakt.
