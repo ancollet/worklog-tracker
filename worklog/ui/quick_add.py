@@ -24,6 +24,7 @@ from worklog.ui.completers import (
     refresh_description_completer,
     refresh_task_completer,
 )
+from worklog.ui.snippet_button import with_snippet_button
 
 
 class QuickAddPopup(QDialog):
@@ -89,7 +90,7 @@ class QuickAddPopup(QDialog):
         form = QFormLayout()
         form.addRow("Projekt:", self.project_combo)
         form.addRow("Task:", self.task_input)
-        form.addRow("Beschr.:", self.desc_input)
+        form.addRow("Beschr.:", with_snippet_button(conn, self.desc_input))
         outer.addLayout(form)
         outer.addWidget(self.hint_label)
         btn_row = QHBoxLayout()

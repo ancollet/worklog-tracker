@@ -46,6 +46,14 @@ class Flag:
 
 
 @dataclass(slots=True)
+class Snippet:
+    id: int
+    text: str
+    sort_order: int = 0
+    created_at: Optional[datetime] = None
+
+
+@dataclass(slots=True)
 class LogEntry:
     id: int
     project_id: int

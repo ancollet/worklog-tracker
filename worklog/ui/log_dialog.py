@@ -34,6 +34,7 @@ from worklog.ui.completers import (
     refresh_description_completer,
     refresh_task_completer,
 )
+from worklog.ui.snippet_button import with_snippet_button
 
 ROUNDING_CHOICES = [
     ("Default", None),
@@ -157,7 +158,7 @@ class LogDialog(QDialog):
         common = QFormLayout()
         common.addRow("Projekt:", self.project_combo)
         common.addRow("Task:", self.task_input)
-        common.addRow("Beschr.:", self.desc_input)
+        common.addRow("Beschr.:", with_snippet_button(conn, self.desc_input))
         round_row = QHBoxLayout()
         round_row.addWidget(self.round_combo)
         round_row.addWidget(self.round_preview, 1)
