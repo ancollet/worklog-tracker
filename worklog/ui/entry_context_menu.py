@@ -16,6 +16,7 @@ from worklog import repository as repo
 from worklog.models import LogEntry
 from worklog.services.booking import cancel_booking, cancel_booking_hint
 from worklog.services.entry_menu import clipboard_text, flag_menu_state, plan_entry_menu
+from worklog.services.llm_settings import load_configuration
 from worklog.services.timer import (
     AlreadyRunningError,
     ProjectArchivedError,
@@ -112,11 +113,13 @@ def build_entry_context_menu(
     after every action that changed data. `move_anchor_id` (the clicked entry)
     adds "Verschieben auf…", with the date picker preset to that entry's day.
     """
-    plan = plan_entry_menu(logs)
+    llm_config = load_configuration(conn)
+    plan = plan_entry_menu(logs, llm_missing_text=llm_config.missing_text)
     log_ids = [int(log.id) for log in logs]
     n = len(log_ids)
 
     menu = QMenu(parent)
+    menu.setToolTipsVisible(True)  # a disabled item says why
     header = QAction(plan.header, menu)
     header.setEnabled(False)
     menu.addAction(header)
@@ -161,6 +164,18 @@ def build_entry_context_menu(
 
         move_act.triggered.connect(move)
         menu.addAction(move_act)
+
+    clean_act = QAction("✦  Beschreibungen bereinigen…", menu)
+    clean_act.setEnabled(plan.can_clean_descriptions)
+    clean_act.setToolTip(plan.clean_descriptions_hint or "")
+
+    def clean(_checked=False) -> None:
+        from worklog.ui.bulk_cleanup_dialog import clean_descriptions
+        if clean_descriptions(parent, conn, logs, llm_config):
+            on_changed()
+
+    clean_act.triggered.connect(clean)
+    menu.addAction(clean_act)
 
     flags_menu = menu.addMenu("⚑  Flags")
     flags = repo.list_flags(conn)

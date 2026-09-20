@@ -197,3 +197,32 @@ def test_copy_description_stays_enabled_for_booked_and_running_entries():
     assert plan_entry_menu([booked]).can_copy_description is True
     assert plan_entry_menu([running]).can_copy_description is True
     assert clipboard_text([booked, running]) == "A\nB"
+
+
+# ---------- Beschreibungen bereinigen… ----------
+
+def test_clean_descriptions_is_offered_for_one_or_several_entries():
+    for logs in ([_entry(1)], [_entry(1), _entry(2, running=True)]):
+        plan = plan_entry_menu(logs)
+        assert plan.can_clean_descriptions is True
+        assert plan.clean_descriptions_hint is None
+
+
+def test_clean_descriptions_is_disabled_without_complete_llm_configuration():
+    plan = plan_entry_menu([_entry(1)], llm_missing_text="Es fehlt: API-Key.")
+    assert plan.can_clean_descriptions is False
+    assert plan.clean_descriptions_hint == "Es fehlt: API-Key."
+
+
+def test_clean_descriptions_stays_available_when_only_some_entries_are_cleanable():
+    logs = [_entry(1), _entry(2, worklog_id="10042"), replace(_entry(3), description="")]
+    assert plan_entry_menu(logs).can_clean_descriptions is True
+
+
+def test_clean_descriptions_is_disabled_when_no_entry_is_cleanable():
+    logs = [_entry(1, worklog_id="10042"), replace(_entry(2), description=None)]
+    plan = plan_entry_menu(logs)
+    assert plan.can_clean_descriptions is False
+    assert plan.clean_descriptions_hint == (
+        "Kein Eintrag der Auswahl ist bereinigbar (gebucht oder ohne Beschreibung)."
+    )

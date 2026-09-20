@@ -387,6 +387,22 @@ def update_log(
     )
 
 
+def set_log_description(conn: sqlite3.Connection, log_id: int, description: Optional[str]) -> None:
+    """Set only the description of an Eintrag (LLM-Bereinigung); every other field stays.
+
+    Unlike `update_log` it never writes times back, so a laufender Eintrag keeps
+    running even if it is stopped or edited elsewhere in the meantime. Respects the
+    Sperr-Regel; raises LookupError when the entry no longer exists.
+    """
+    ensure_not_booked(conn, [log_id])
+    cur = conn.execute(
+        "UPDATE log_entry SET description = ?, updated_at = ? WHERE id = ?",
+        (description, _now_iso(), log_id),
+    )
+    if cur.rowcount == 0:
+        raise LookupError(f"Eintrag {log_id} existiert nicht")
+
+
 def delete_log(conn: sqlite3.Connection, log_id: int) -> None:
     ensure_not_booked(conn, [log_id])
     conn.execute("DELETE FROM log_entry WHERE id = ?", (log_id,))

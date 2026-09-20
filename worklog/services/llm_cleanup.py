@@ -107,6 +107,11 @@ def postprocess_answer(answer: str) -> str:
     return text
 
 
+def is_already_clean(before: str, after: str) -> bool:
+    """An unchanged answer is shown as "bereits sauber", never offered as a change."""
+    return before.strip() == after.strip()
+
+
 def _error_detail(exc: urllib.error.HTTPError) -> str:
     """The provider's own message ({"error": {"message": ...}}) if there is one."""
     try:
