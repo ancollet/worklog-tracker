@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from PyQt6.QtCore import QTimer, QUrl, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFont
+from PyQt6.QtGui import QColor, QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -15,17 +15,18 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QMenu,
     QMessageBox,
     QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
+    QTreeWidgetItemIterator,
     QVBoxLayout,
     QWidget,
 )
 
 from worklog import repository as repo
 from worklog.models import LogEntry
+from worklog.services.entry_menu import target_log_ids
 from worklog.services.rounding import format_hm_short, format_hms
 from worklog.services.timer import TimerService, manual_log
 from worklog.ui.completers import (
@@ -34,6 +35,7 @@ from worklog.ui.completers import (
     refresh_description_completer,
     refresh_task_completer,
 )
+from worklog.ui.entry_context_menu import build_entry_context_menu
 
 CLOCKWORK_URL = (
     "https://igusdev.atlassian.net/plugins/servlet/ac/clockwork-free-cloud/clockwork-mywork"
@@ -119,9 +121,7 @@ class RecentTree(QTreeWidget):
     """Recent log entries grouped Month → Day → Entry, with Tags column (chips)."""
 
     edit_requested = pyqtSignal(int)
-    delete_requested = pyqtSignal(list)  # list[int]
-    flags_apply_requested = pyqtSignal(list, int, bool)  # log_ids, flag_id, enabled
-    manage_flags_requested = pyqtSignal()
+    changed = pyqtSignal()  # a context-menu action changed data
 
     COLUMNS = ["Zeit", "Dauer", "Task", "Beschreibung", "Kunde", "Tags"]
     COL_TIME, COL_DURATION, COL_TASK, COL_DESC, COL_CUSTOMER, COL_TAGS = range(6)
@@ -217,11 +217,15 @@ class RecentTree(QTreeWidget):
             self.edit_requested.emit(int(log_id))
 
     def _selected_log_ids(self) -> list[int]:
+        """Selected entries in visual (top-to-bottom) order."""
         ids: list[int] = []
-        for it in self.selectedItems():
-            data = it.data(0, Qt.ItemDataRole.UserRole)
-            if data is not None:
+        it = QTreeWidgetItemIterator(self)
+        while it.value() is not None:
+            item = it.value()
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if data is not None and item.isSelected():
                 ids.append(int(data))
+            it += 1
         return ids
 
     def _show_context_menu(self, pos) -> None:
@@ -231,74 +235,18 @@ class RecentTree(QTreeWidget):
         clicked_id = item.data(0, Qt.ItemDataRole.UserRole)
         if clicked_id is None:
             return
-        clicked_id = int(clicked_id)
 
-        selected_ids = self._selected_log_ids()
-        # If user right-clicks an unselected leaf, operate on just that one
-        # but don't disturb their selection.
-        if clicked_id not in selected_ids:
-            target_ids = [clicked_id]
-        else:
-            target_ids = selected_ids
-        n = len(target_ids)
-
-        menu = QMenu(self)
-        header = QAction(f"{n} Eintrag" + ("e" if n != 1 else "") + " ausgewählt", menu)
-        header.setEnabled(False)
-        menu.addAction(header)
-        menu.addSeparator()
-
-        edit_act = QAction("✎  Bearbeiten…", menu)
-        edit_act.setEnabled(n == 1)
-        if n == 1:
-            edit_act.triggered.connect(lambda: self.edit_requested.emit(target_ids[0]))
-        menu.addAction(edit_act)
-
-        flags_menu = menu.addMenu("⚑  Flags")
-        flags = repo.list_flags(self.conn)
-        if not flags:
-            empty = QAction("(keine Flags – verwalten…)", flags_menu)
-            empty.setEnabled(False)
-            flags_menu.addAction(empty)
-        else:
-            counts = repo.count_logs_with_flag(self.conn, target_ids)
-            for flag in flags:
-                have = counts.get(flag.id, 0)
-                if have == n:
-                    state_label = flag.name
-                    new_state = False
-                    checked = True
-                elif have == 0:
-                    state_label = flag.name
-                    new_state = True
-                    checked = False
-                else:
-                    state_label = f"{flag.name}  (gemischt: {have}/{n})"
-                    new_state = True
-                    checked = False
-                act = QAction(state_label, flags_menu)
-                act.setCheckable(True)
-                act.setChecked(checked)
-                act.triggered.connect(
-                    lambda _checked=False, fid=flag.id, ids=list(target_ids), s=new_state:
-                        self.flags_apply_requested.emit(ids, fid, s)
-                )
-                flags_menu.addAction(act)
-        flags_menu.addSeparator()
-        manage = QAction("⚙  Flags verwalten…", flags_menu)
-        manage.triggered.connect(self.manage_flags_requested.emit)
-        flags_menu.addAction(manage)
-
-        menu.addSeparator()
-        del_act = QAction(
-            "⌫  Löschen" if n == 1 else f"⌫  {n} Einträge löschen", menu
+        target_ids = target_log_ids(int(clicked_id), self._selected_log_ids())
+        logs = [log for log in (repo.get_log(self.conn, i) for i in target_ids) if log is not None]
+        if not logs:
+            return
+        menu = build_entry_context_menu(
+            self, self.conn, logs,
+            on_edit=self.edit_requested.emit,
+            on_changed=self.changed.emit,
         )
-        del_act.triggered.connect(
-            lambda _checked=False, ids=list(target_ids): self.delete_requested.emit(ids)
-        )
-        menu.addAction(del_act)
-
         menu.exec(self.viewport().mapToGlobal(pos))
+        menu.deleteLater()
 
 
 class TimerWidget(QWidget):
@@ -365,9 +313,7 @@ class TimerWidget(QWidget):
         self.summary_label = QLabel("Heute: —     ·     Diese Woche: —")
         self.recent_tree = RecentTree(conn, self)
         self.recent_tree.edit_requested.connect(self._edit_log)
-        self.recent_tree.delete_requested.connect(self._delete_logs)
-        self.recent_tree.flags_apply_requested.connect(self._apply_flag)
-        self.recent_tree.manage_flags_requested.connect(self.open_flags_dialog)
+        self.recent_tree.changed.connect(self.changed.emit)
 
         # Layout
         outer = QVBoxLayout(self)
@@ -504,26 +450,6 @@ class TimerWidget(QWidget):
         dlg = LogDialog(self.conn, parent=self, log_id=log_id)
         if dlg.exec():
             self.changed.emit()
-
-    def _delete_logs(self, log_ids: list[int]) -> None:
-        if not log_ids:
-            return
-        msg = (
-            "Diesen Eintrag wirklich löschen?"
-            if len(log_ids) == 1
-            else f"{len(log_ids)} Einträge wirklich löschen?"
-        )
-        confirm = QMessageBox.question(self, "Löschen?", msg)
-        if confirm != QMessageBox.StandardButton.Yes:
-            return
-        repo.delete_logs_bulk(self.conn, log_ids)
-        self.changed.emit()
-
-    def _apply_flag(self, log_ids: list, flag_id: int, enabled: bool) -> None:
-        if not log_ids:
-            return
-        repo.set_log_flag_bulk(self.conn, [int(x) for x in log_ids], int(flag_id), bool(enabled))
-        self.changed.emit()
 
     def _reload_projects(self) -> None:
         prev = self.current_project_id()

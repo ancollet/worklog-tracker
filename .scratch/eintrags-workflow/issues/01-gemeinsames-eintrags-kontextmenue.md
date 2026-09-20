@@ -8,10 +8,12 @@ Spec: `.scratch/eintrags-workflow/spec.md` (Abschnitt "Übergreifend").
 
 **Status:** ready-for-agent
 
-- [ ] Es gibt genau einen Ort, der das Kontextmenü für eine Auswahl von Einträgen aufbaut; Baum und Tabelle rufen ihn auf.
-- [ ] Rechtsklick auf einen nicht selektierten Eintrag wirkt nur auf diesen, ohne die Auswahl zu verändern; Rechtsklick auf einen selektierten Eintrag wirkt auf die ganze Auswahl (heutiges Verhalten des Baums, jetzt auch in der Tabelle).
-- [ ] Die Tabelle im Logs-Tab erlaubt Mehrfachauswahl.
-- [ ] Alle heutigen Menüpunkte bleiben erhalten und funktionieren in beiden Ansichten: Bearbeiten (nur bei genau einem Eintrag), Flags-Untermenü inkl. "gemischt"-Anzeige und "Flags verwalten…", Jira buchen bzw. Jira-Buchung lokal entfernen (nur bei genau einem Eintrag eines Jira-Kunden), Löschen einzeln und gesammelt mit Rückfrage.
-- [ ] Das bisherige "Fortsetzen" im Logs-Tab (Button und Menüpunkt) funktioniert unverändert weiter; es wird in Ticket 04 umgebaut.
-- [ ] Nach jeder Aktion aus dem Menü sind beide Ansichten und die Summen aktuell.
-- [ ] Bestehende Tests laufen grün (`uv run pytest`); die App startet und beide Menüs sind von Hand geprüft.
+- [x] Es gibt genau einen Ort, der das Kontextmenü für eine Auswahl von Einträgen aufbaut; Baum und Tabelle rufen ihn auf.
+- [x] Rechtsklick auf einen nicht selektierten Eintrag wirkt nur auf diesen, ohne die Auswahl zu verändern; Rechtsklick auf einen selektierten Eintrag wirkt auf die ganze Auswahl (heutiges Verhalten des Baums, jetzt auch in der Tabelle).
+- [x] Die Tabelle im Logs-Tab erlaubt Mehrfachauswahl.
+- [x] Alle heutigen Menüpunkte bleiben erhalten und funktionieren in beiden Ansichten: Bearbeiten (nur bei genau einem Eintrag), Flags-Untermenü inkl. "gemischt"-Anzeige und "Flags verwalten…", Jira buchen bzw. Jira-Buchung lokal entfernen (nur bei genau einem Eintrag eines Jira-Kunden), Löschen einzeln und gesammelt mit Rückfrage.
+- [x] Das bisherige "Fortsetzen" im Logs-Tab (Button und Menüpunkt) funktioniert unverändert weiter; es wird in Ticket 04 umgebaut.
+- [x] Nach jeder Aktion aus dem Menü sind beide Ansichten und die Summen aktuell.
+- [x] Bestehende Tests laufen grün (`uv run pytest`); die App startet und beide Menüs sind von Hand geprüft.
+
+**Hinweis zur Abnahme:** Die Menüs wurden offscreen geprüft (MainWindow über In-Memory-DB, Menüaufbau über die echten Rechtsklick-Handler beider Ansichten, Aktionen Flag setzen / Jira-Buchung lokal entfernen / Löschen einzeln und gesammelt / Fortsetzen ausgelöst, Rückfragen automatisch bestätigt). Nicht geprüft: echter Mausklick am Bildschirm und "In Jira buchen…" gegen ein echtes Jira (Code unverändert nach `worklog/ui/jira_booking.py` verschoben).
