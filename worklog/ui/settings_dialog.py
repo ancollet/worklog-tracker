@@ -4,6 +4,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -22,7 +23,11 @@ from PyQt6.QtWidgets import (
 
 from worklog import repository as repo
 from worklog.paths import autostart_desktop_path
-from worklog.services import credentials, jira as jira_client
+from worklog.services import credentials, jira as jira_client, salesforce as sf_client
+from worklog.services.salesforce_settings import (
+    SETTINGS_SF_CONSUMER_KEY,
+    SETTINGS_SF_INSTANCE_URL,
+)
 from worklog.ui.theme import DEFAULT_UI_THEME, SETTINGS_UI_THEME, THEMES, apply_theme
 
 ROUNDING_CHOICES = [
@@ -36,7 +41,31 @@ ROUNDING_CHOICES = [
 
 SETTINGS_JIRA_BASE_URL = "jira.base_url"
 SETTINGS_JIRA_EMAIL = "jira.email"
-SETTINGS_SF_INSTANCE_URL = "salesforce.instance_url"
+
+# Connection tests that outlive their dialog are parked here until they finish,
+# so a running QThread is never garbage-collected.
+_running_connection_tests: set = set()
+
+
+class _SalesforceConnectionTest(QThread):
+    """Runs "Verbindung testen" off the UI thread. Emits (ok, text)."""
+
+    finished_with = pyqtSignal(bool, str)
+
+    def __init__(self, creds: sf_client.SalesforceCredentials, client_factory) -> None:
+        super().__init__()
+        self._creds = creds
+        self._client_factory = client_factory
+
+    def run(self) -> None:
+        try:
+            self._client_factory(self._creds).test_connection()
+        except sf_client.SalesforceError as exc:
+            self.finished_with.emit(False, str(exc))
+        except Exception as exc:  # never let a worker thread die silently
+            self.finished_with.emit(False, f"Unerwarteter Fehler: {exc}")
+        else:
+            self.finished_with.emit(True, "")
 
 
 class SettingsDialog(QDialog):
@@ -120,12 +149,48 @@ class SettingsDialog(QDialog):
         jira_group = QGroupBox("Jira")
         jira_group.setLayout(jira_form)
 
-        # ---- Salesforce (Platzhalter, Auth folgt) ----
+        # ---- Salesforce ----
         self.sf_instance_url = QLineEdit(repo.get_setting(conn, SETTINGS_SF_INSTANCE_URL, "") or "")
         self.sf_instance_url.setPlaceholderText("https://your-domain.my.salesforce.com")
+        self.sf_consumer_key = QLineEdit(repo.get_setting(conn, SETTINGS_SF_CONSUMER_KEY, "") or "")
+        self.sf_consumer_key.setPlaceholderText("Consumer Key der External Client App")
+        self.sf_consumer_secret = QLineEdit()
+        self.sf_consumer_secret.setEchoMode(QLineEdit.EchoMode.Password)
+        sf_keyring_problem = ""
+        try:
+            existing_secret = credentials.get_salesforce_secret()
+        except credentials.CredentialsUnavailableError as exc:
+            existing_secret = None
+            sf_keyring_problem = str(exc)
+        self._existing_sf_secret = existing_secret
+        self.sf_consumer_secret.setPlaceholderText(
+            "(unverändert)" if existing_secret else "Consumer Secret der External Client App"
+        )
+
+        self.sf_test_btn = QPushButton("Verbindung testen")
+        self.sf_test_btn.clicked.connect(self._test_salesforce)
+        self.sf_status = QLabel("")
+        self.sf_status.setWordWrap(True)
+        self._sf_test: _SalesforceConnectionTest | None = None
+        self._sf_client_factory = sf_client.SalesforceClient
+        if sf_keyring_problem:
+            self._set_sf_status(f"OS-Keyring nicht erreichbar: {sf_keyring_problem}", "error")
+        else:
+            self._set_sf_status("", "neutral")
+
         sf_form = QFormLayout()
         sf_form.addRow("Instance-URL:", self.sf_instance_url)
-        sf_hint = QLabel("Salesforce-Anbindung folgt — hier nur die Instance-URL.")
+        sf_form.addRow("Consumer Key:", self.sf_consumer_key)
+        sf_form.addRow("Consumer Secret:", self.sf_consumer_secret)
+        sf_test_row = QHBoxLayout()
+        sf_test_row.addWidget(self.sf_test_btn)
+        sf_test_row.addStretch(1)
+        sf_form.addRow("", sf_test_row)
+        sf_form.addRow("", self.sf_status)
+        sf_hint = QLabel(
+            "Anmeldung über die External Client App mit dem gemeinsamen Integrations-User "
+            "(Client-Credentials). Das Consumer Secret wird im OS-Keyring gespeichert, nicht in der DB."
+        )
         sf_hint.setStyleSheet("color: gray; font-size: 11px;")
         sf_hint.setWordWrap(True)
         sf_form.addRow("", sf_hint)
@@ -159,6 +224,7 @@ class SettingsDialog(QDialog):
         repo.set_setting(self.conn, SETTINGS_JIRA_BASE_URL, self.jira_base_url.text().strip() or None)
         repo.set_setting(self.conn, SETTINGS_JIRA_EMAIL, self.jira_email.text().strip() or None)
         repo.set_setting(self.conn, SETTINGS_SF_INSTANCE_URL, self.sf_instance_url.text().strip() or None)
+        repo.set_setting(self.conn, SETTINGS_SF_CONSUMER_KEY, self.sf_consumer_key.text().strip() or None)
 
         new_token = self.jira_token.text()
         if new_token:
@@ -168,6 +234,16 @@ class SettingsDialog(QDialog):
                 QMessageBox.warning(
                     self, "Keyring",
                     f"Konnte Jira-Token nicht im OS-Keyring speichern: {exc}",
+                )
+
+        new_secret = self.sf_consumer_secret.text()
+        if new_secret:
+            try:
+                credentials.set_salesforce_secret(new_secret)
+            except credentials.CredentialsUnavailableError as exc:
+                QMessageBox.warning(
+                    self, "Keyring",
+                    f"Konnte Salesforce Consumer Secret nicht im OS-Keyring speichern: {exc}",
                 )
 
         try:
@@ -198,6 +274,48 @@ class SettingsDialog(QDialog):
             self.jira_status.setStyleSheet("color: #b91c1c; font-size: 11px;")
         finally:
             self.jira_test_btn.setEnabled(True)
+
+    def _set_sf_status(self, text: str, kind: str) -> None:
+        color = {"ok": "#15803d", "error": "#b91c1c"}.get(kind, "gray")
+        self.sf_status.setText(text)
+        self.sf_status.setStyleSheet(f"color: {color}; font-size: 11px;")
+
+    def _test_salesforce(self) -> None:
+        """Test with what is typed into the dialog right now — saved or not."""
+        instance_url = self.sf_instance_url.text().strip()
+        consumer_key = self.sf_consumer_key.text().strip()
+        secret = self.sf_consumer_secret.text() or self._existing_sf_secret
+        if not (instance_url and consumer_key and secret):
+            self._set_sf_status("Instance-URL, Consumer Key und Consumer Secret erforderlich.", "error")
+            return
+        self._set_sf_status("Teste…", "neutral")
+        self.sf_test_btn.setEnabled(False)
+        test = _SalesforceConnectionTest(
+            sf_client.SalesforceCredentials(instance_url, consumer_key, secret),
+            self._sf_client_factory,
+        )
+        test.finished_with.connect(self._on_sf_test_finished)
+        test.finished.connect(lambda t=test: _running_connection_tests.discard(t))
+        _running_connection_tests.add(test)
+        self._sf_test = test
+        test.start()
+
+    def _on_sf_test_finished(self, ok: bool, text: str) -> None:
+        if self.sender() is not self._sf_test:
+            return
+        self._sf_test = None
+        self.sf_test_btn.setEnabled(True)
+        if ok:
+            self._set_sf_status("OK — Anmeldung mit dem Integrations-User erfolgreich.", "ok")
+        else:
+            self._set_sf_status(f"Fehler: {text}", "error")
+
+    def done(self, result: int) -> None:
+        # A still-running test may finish after the dialog is gone; it must not call back into us.
+        if self._sf_test is not None:
+            self._sf_test.finished_with.disconnect(self._on_sf_test_finished)
+            self._sf_test = None
+        super().done(result)
 
     def _apply_autostart(self, enable: bool) -> None:
         path: Path = autostart_desktop_path()
