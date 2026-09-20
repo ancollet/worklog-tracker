@@ -12,7 +12,7 @@ thread (the database connection belongs to the UI thread):
     record_booking   (database)  writes Buchungsreferenz and gebuchte Menge to the Eintrag
 
 `book_entry` runs all three in a row. Every function takes exactly one Eintrag;
-a Sammelbuchung calls them row by row.
+a Sammelbuchung (`salesforce_booking_run.py`) calls them row by row.
 """
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from worklog import repository as repo
 from worklog.db import transaction
 from worklog.models import LogEntry
 from worklog.services.salesforce import CostItem, CostItemDraft, SalesforceClient
+from worklog.services.salesforce_reconciliation import is_closed_in_salesforce
 from worklog.services.salesforce_registration import service_type_of
 from worklog.services.salesforce_settings import SERVICE_TYPES, SalesforceConfiguration
 
@@ -59,6 +60,8 @@ PROJECT_NOT_REGISTERED = "project_not_registered"
 PROJECT_CLOSED = "project_closed"                    # only known after asking Salesforce
 INVALID_VALUES = "invalid_values"                    # confirmed values break a rule
 
+_PROJECT_CLOSED_TEXT = "Projekt ist in Salesforce geschlossen."
+
 
 class BookingError(RuntimeError):
     """Buchen did not work. The message is readable for the user and never holds a Salesforce ID."""
@@ -91,12 +94,17 @@ class BookingNotRecordedError(BookingError):
 
 
 def booking_block(
-    conn: sqlite3.Connection, log: Optional[LogEntry], configuration: SalesforceConfiguration
+    conn: sqlite3.Connection, log: Optional[LogEntry], configuration: SalesforceConfiguration,
+    *, closed_known: bool = False,
 ) -> Optional[BookingRefusedError]:
     """Why this Eintrag cannot be gebucht in Salesforce right now — None when it can.
 
     Everything that is known without asking Salesforce; menu, Buchungsvorschlag and
     Buchen itself all ask here. (The error is returned, not raised.)
+
+    `closed_known`: the Projekt was abgeglichen a moment ago, so its Kennzeichen
+    "in Salesforce geschlossen" counts too. Without a fresh Abgleich it does not — the
+    Projekt may have been reopened since.
     """
     if log is None:
         return BookingRefusedError(ENTRY_MISSING, "Eintrag existiert nicht mehr.")
@@ -120,6 +128,8 @@ def booking_block(
             PROJECT_NOT_REGISTERED,
             "Projekt ist nicht registriert (mit keinem Salesforce-Projekt verbunden).",
         )
+    if closed_known and is_closed_in_salesforce(project):
+        return BookingRefusedError(PROJECT_CLOSED, _PROJECT_CLOSED_TEXT)
     return None
 
 
@@ -165,10 +175,11 @@ class ConfirmedBooking:
 
 
 def propose_booking(
-    conn: sqlite3.Connection, log_id: int, configuration: SalesforceConfiguration
+    conn: sqlite3.Connection, log_id: int, configuration: SalesforceConfiguration,
+    *, closed_known: bool = False,
 ) -> BookingProposal:
     log = repo.get_log(conn, log_id)
-    block = booking_block(conn, log, configuration)
+    block = booking_block(conn, log, configuration, closed_known=closed_known)
     if log is None:
         return BookingProposal(log_id, None, "", QUANTITY_STEP_HOURS, SERVICE_TYPES[0], "", "", str(block))
     project = repo.get_project(conn, log.project_id)
@@ -200,11 +211,12 @@ class PreparedBooking:
 
 
 def prepare_booking(
-    conn: sqlite3.Connection, configuration: SalesforceConfiguration, confirmed: ConfirmedBooking
+    conn: sqlite3.Connection, configuration: SalesforceConfiguration, confirmed: ConfirmedBooking,
+    *, closed_known: bool = False,
 ) -> PreparedBooking:
     """Check everything that can be checked without Salesforce. Raises BookingRefusedError."""
     log = repo.get_log(conn, confirmed.log_id)
-    block = booking_block(conn, log, configuration)
+    block = booking_block(conn, log, configuration, closed_known=closed_known)
     if block is not None:
         raise block
     half_hours = confirmed.quantity_hours / QUANTITY_STEP_HOURS
@@ -233,14 +245,19 @@ def prepare_booking(
     )
 
 
-def submit_booking(client: SalesforceClient, prepared: PreparedBooking) -> CostItem:
+def submit_booking(
+    client: SalesforceClient, prepared: PreparedBooking, *, closed_known: bool = False
+) -> CostItem:
     """The network part: create the Kostenposition, unless the Projekt was closed in Salesforce.
 
     Touches no database, so it may run off the UI thread. Raises BookingRefusedError
     (Projekt closed) or the SalesforceError of the client; then nothing was created.
+
+    `closed_known`: a Sammelbuchung asked Salesforce once for all its Projekte and
+    prepared with that answer, so the question is not repeated row by row.
     """
-    if not client.is_project_open(prepared.draft.salesforce_project_id):
-        raise BookingRefusedError(PROJECT_CLOSED, "Projekt ist in Salesforce geschlossen.")
+    if not closed_known and not client.is_project_open(prepared.draft.salesforce_project_id):
+        raise BookingRefusedError(PROJECT_CLOSED, _PROJECT_CLOSED_TEXT)
     return client.create_cost_item(prepared.draft)
 
 

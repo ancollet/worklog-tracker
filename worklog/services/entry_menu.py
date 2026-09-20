@@ -72,13 +72,10 @@ def plan_entry_menu(
     # Jira: booking is always exactly one, not yet gebuchter, entry of a Jira customer.
     if n == 1 and not locked and logs[0].customer_booking_system == "jira":
         booking_system = "jira"
-    # Salesforce: shown for entries of Salesforce-Kunden only, disabled with the reason.
-    elif all(log.customer_booking_system == "salesforce" for log in logs):
+    # Salesforce: one Eintrag or a Sammelbuchung, as soon as a Salesforce-Kunde is involved.
+    elif any(log.customer_booking_system == "salesforce" for log in logs):
         booking_system = "salesforce"
-        if n != 1:
-            booking_disabled_reason = "Bitte genau einen Eintrag auswählen."
-        elif salesforce_block is not None:
-            booking_disabled_reason = salesforce_block(logs[0])
+        booking_disabled_reason = _salesforce_disabled_reason(logs, salesforce_block)
     return EntryMenuPlan(
         header=f"{n} Eintrag ausgewählt" if n == 1 else f"{n} Einträge ausgewählt",
         # Fortsetzen: exactly one entry, and not one that is still running.
@@ -97,6 +94,27 @@ def plan_entry_menu(
         can_clean_descriptions=clean_hint is None,
         clean_descriptions_hint=clean_hint,
     )
+
+
+def _salesforce_disabled_reason(
+    logs: list[LogEntry], salesforce_block: Optional[Callable[[LogEntry], Optional[str]]]
+) -> Optional[str]:
+    """Why "In Salesforce buchen…" is disabled for a selection with Salesforce-Kunden, else None.
+
+    A Sammelbuchung only needs one buchbaren Eintrag: the Buchungsdialog greys out the rest."""
+    if any(log.customer_booking_system == "jira" for log in logs):
+        return (
+            "Die Auswahl enthält Einträge von Jira- und Salesforce-Kunden. "
+            "Bitte getrennt buchen."
+        )
+    if salesforce_block is None:
+        return None
+    reasons = [
+        salesforce_block(log) for log in logs if log.customer_booking_system == "salesforce"
+    ]
+    if all(reasons):
+        return reasons[0] if len(set(reasons)) == 1 else "Kein Eintrag der Auswahl ist buchbar."
+    return None
 
 
 def clipboard_text(logs: list[LogEntry]) -> str:

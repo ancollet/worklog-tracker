@@ -146,11 +146,11 @@ def test_booked_salesforce_entry_shows_disabled_booking_next_to_buchung_stornier
     assert plan.can_cancel_booking is True
 
 
-def test_salesforce_booking_is_active_for_exactly_one_entry_only():
+def test_several_entries_of_salesforce_customers_offer_the_sammelbuchung():
     logs = [_entry(1, booking_system="salesforce"), _entry(2, booking_system="salesforce")]
     plan = plan_entry_menu(logs, salesforce_block=lambda log: None)
     assert plan.booking_system == "salesforce"
-    assert plan.booking_disabled_reason == "Bitte genau einen Eintrag auswählen."
+    assert plan.booking_disabled_reason is None
 
 
 def test_single_booked_entry_with_a_link_offers_to_open_its_booking():
@@ -160,9 +160,35 @@ def test_single_booked_entry_with_a_link_offers_to_open_its_booking():
     assert plan_entry_menu([_entry(2)]).booking_url is None
 
 
-def test_mixed_selection_of_jira_and_salesforce_customers_offers_no_booking():
+def test_mixed_selection_of_jira_and_salesforce_customers_disables_booking_with_a_reason():
     logs = [_entry(1, booking_system="salesforce"), _entry(2, booking_system="jira")]
-    assert plan_entry_menu(logs, salesforce_block=lambda log: None).booking_system is None
+    plan = plan_entry_menu(logs, salesforce_block=lambda log: None)
+    assert plan.booking_system == "salesforce"
+    assert "Jira- und Salesforce-Kunden" in plan.booking_disabled_reason
+
+
+def test_sammelbuchung_needs_only_one_entry_of_a_salesforce_customer():
+    logs = [_entry(1), _entry(2, booking_system="salesforce"), _entry(3, booking_system="salesforce")]
+    blocked = {2: "Eintrag läuft noch."}
+    plan = plan_entry_menu(logs, salesforce_block=lambda log: blocked.get(log.id))
+    assert plan.booking_system == "salesforce"
+    assert plan.booking_disabled_reason is None
+
+
+def test_sammelbuchung_without_any_bookable_entry_is_disabled_with_the_reason():
+    logs = [_entry(1, booking_system="salesforce"), _entry(2, booking_system="salesforce")]
+
+    same = plan_entry_menu(logs, salesforce_block=lambda log: "Es fehlt: Leistende Person.")
+    assert same.booking_disabled_reason == "Es fehlt: Leistende Person."
+
+    reasons = {1: "Eintrag läuft noch.", 2: "Eintrag ist bereits gebucht."}
+    different = plan_entry_menu(logs, salesforce_block=lambda log: reasons[log.id])
+    assert different.booking_disabled_reason == "Kein Eintrag der Auswahl ist buchbar."
+
+
+def test_several_entries_of_jira_customers_still_offer_no_booking():
+    logs = [_entry(1, booking_system="jira"), _entry(2, booking_system="jira")]
+    assert plan_entry_menu(logs).booking_system is None
 
 
 # ---------- Fortsetzen ----------
