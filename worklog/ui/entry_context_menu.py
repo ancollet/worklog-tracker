@@ -8,13 +8,29 @@ from __future__ import annotations
 import sqlite3
 from typing import Callable, Sequence
 
+from PyQt6.QtCore import QEvent, QObject, Qt
 from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QMenu, QMessageBox, QWidget
+from PyQt6.QtWidgets import QAbstractItemView, QMenu, QMessageBox, QWidget
 
 from worklog import repository as repo
 from worklog.models import LogEntry
 from worklog.services.entry_menu import flag_menu_state, plan_entry_menu
 from worklog.ui.jira_booking import book_jira, clear_jira_booking
+
+
+class _KeepSelectionOnRightClick(QObject):
+    """Swallow right-button presses so Qt does not re-select the clicked row."""
+
+    def eventFilter(self, _obj, event) -> bool:  # noqa: N802 (Qt)
+        return (
+            event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick)
+            and event.button() == Qt.MouseButton.RightButton
+        )
+
+
+def keep_selection_on_right_click(view: QAbstractItemView) -> None:
+    """A right-click opens the menu but leaves the view's selection untouched."""
+    view.viewport().installEventFilter(_KeepSelectionOnRightClick(view))
 
 
 def delete_entries(parent: QWidget, conn: sqlite3.Connection, log_ids: list[int]) -> bool:

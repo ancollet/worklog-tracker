@@ -118,6 +118,9 @@ class SalesforceClient:
         try:
             data = self._open(req)
         except urllib.error.HTTPError as exc:
+            if exc.code >= 500:
+                # Salesforce is down, not the credentials wrong.
+                raise _org_error(exc) from exc
             # The token endpoint answers {"error": "...", "error_description": "..."}.
             detail = _oauth_error_text(exc) or f"HTTP {exc.code}"
             raise SalesforceAuthError(f"Salesforce hat die Anmeldung abgelehnt: {detail}") from exc

@@ -98,8 +98,9 @@ class TimerService:
     # Bezieht sich auf den zuletzt gestarteten laufenden Eintrag.
 
     def current(self) -> Optional[LogEntry]:
+        # Höchste ID statt spätester Start: der Start ist nachträglich editierbar.
         running = self.running_entries()
-        return running[-1] if running else None
+        return max(running, key=lambda log: log.id) if running else None
 
     def is_running(self) -> bool:
         return self.current() is not None

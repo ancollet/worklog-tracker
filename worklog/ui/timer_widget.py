@@ -35,7 +35,7 @@ from worklog.ui.completers import (
     refresh_description_completer,
     refresh_task_completer,
 )
-from worklog.ui.entry_context_menu import build_entry_context_menu
+from worklog.ui.entry_context_menu import build_entry_context_menu, keep_selection_on_right_click
 
 CLOCKWORK_URL = (
     "https://igusdev.atlassian.net/plugins/servlet/ac/clockwork-free-cloud/clockwork-mywork"
@@ -144,6 +144,7 @@ class RecentTree(QTreeWidget):
         self.itemDoubleClicked.connect(self._on_double_click)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
+        keep_selection_on_right_click(self)
 
     def populate(self, logs: list[LogEntry]) -> None:
         self.clear()

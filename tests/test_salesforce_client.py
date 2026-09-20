@@ -140,6 +140,15 @@ def test_rejected_sign_in_raises_auth_error_with_salesforce_text():
     assert len(transport.requests) == 1  # no API call without a token
 
 
+def test_server_error_during_sign_in_is_not_reported_as_rejected_sign_in():
+    transport = _FakeTransport(_http_error(503))
+
+    with pytest.raises(sf.SalesforceOrgError) as excinfo:
+        sf.SalesforceClient(_creds(), opener=transport).test_connection()
+
+    assert "503" in str(excinfo.value)
+
+
 def test_network_error_during_sign_in_raises_network_error():
     transport = _FakeTransport(urllib.error.URLError("Name or service not known"))
 

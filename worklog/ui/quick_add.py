@@ -176,8 +176,9 @@ class QuickAddPopup(QDialog):
         desc = self.desc_input.text().strip() or None
         if self.mode == self.MODE_EDIT:
             self.timer.update_running(project_id=int(pid), task=task, description=desc)
+        elif self.mode == self.MODE_SWITCH:
+            self.timer.switch(project_id=int(pid), task=task, description=desc)
         else:
-            # start or switch (start handles both — stops existing if any)
             self.timer.start(project_id=int(pid), task=task, description=desc)
         self.accept()
 

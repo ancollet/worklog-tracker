@@ -223,6 +223,21 @@ def test_legacy_start_of_identical_entry_returns_running_one(conn):
     assert len(svc.running_entries()) == 1
 
 
+def test_legacy_current_ignores_an_edited_start_time(conn):
+    p = _project(conn)
+    svc = TimerService(conn)
+    first = svc.start_entry(project_id=p.id, task="A", description=None)
+    second = svc.start_entry(project_id=p.id, task="B", description=None)
+    # Start des zweiten Eintrags nachträglich vor den ersten legen.
+    repo.update_log(
+        conn, second.id, project_id=p.id, task="B", description=None,
+        started_at="2000-01-01T08:00:00+01:00", ended_at=None,
+        duration_seconds=None, rounded_to_minutes=None,
+    )
+    assert svc.current().id == second.id
+    assert first.id != second.id
+
+
 def test_legacy_update_running_edits_most_recent_without_stopping(conn):
     p = _project(conn)
     svc = TimerService(conn)

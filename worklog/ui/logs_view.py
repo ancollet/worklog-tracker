@@ -20,7 +20,11 @@ from worklog import repository as repo
 from worklog.services.entry_menu import target_log_ids
 from worklog.services.rounding import format_hm_short
 from worklog.services.timer import TimerService
-from worklog.ui.entry_context_menu import build_entry_context_menu, delete_entries
+from worklog.ui.entry_context_menu import (
+    build_entry_context_menu,
+    delete_entries,
+    keep_selection_on_right_click,
+)
 
 
 class LogsView(QWidget):
@@ -48,6 +52,7 @@ class LogsView(QWidget):
         self.table.cellDoubleClicked.connect(self._edit_row)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
+        keep_selection_on_right_click(self.table)
 
         self.add_btn = QPushButton("+ Add Log")
         self.add_btn.clicked.connect(self._add_log)
@@ -137,23 +142,21 @@ class LogsView(QWidget):
             self.changed.emit()
 
     def _resume_selected(self) -> None:
-        """Clone the selected entry into a fresh, now-running timer."""
+        """Fortsetzen: start a new running entry from the selected one."""
         log = self._selected_log()
         if log is None:
             return
         self._resume(log)
 
     def _resume(self, log) -> None:
-        if self.timer.is_running():
-            confirm = QMessageBox.question(
-                self, "Timer läuft",
-                "Es läuft bereits ein Timer. Diesen stoppen und den Eintrag fortsetzen?",
-            )
-            if confirm != QMessageBox.StandardButton.Yes:
-                return
+        # Starting never stops another entry (ADR-0001), so there is nothing to confirm.
+        already_running = {entry.id for entry in self.timer.running_entries()}
         new_log = self.timer.start(
             project_id=log.project_id, task=log.task, description=log.description
         )
+        if new_log.id in already_running:
+            QMessageBox.information(self, "Läuft bereits", "Dieser Eintrag läuft bereits.")
+            return
         # Carry over the flags so the continuation keeps the original's tags.
         for flag in log.flags:
             repo.set_log_flag(self.conn, new_log.id, flag.id, True)
@@ -176,7 +179,7 @@ class LogsView(QWidget):
         by_id[clicked.id] = clicked
         logs = [by_id[i] for i in target_ids]
 
-        resume_action = QAction("▶  Fortsetzen", self)
+        resume_action = QAction("Fortsetzen ▶", self)
         resume_action.setEnabled(len(logs) == 1)
         resume_action.triggered.connect(lambda _checked=False: self._resume(logs[0]))
         menu = build_entry_context_menu(
