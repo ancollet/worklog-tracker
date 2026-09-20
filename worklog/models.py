@@ -77,6 +77,15 @@ class LogEntry:
     customer_booking_system: Optional[str] = None
     flags: list["Flag"] = field(default_factory=list)
 
+    @property
+    def is_booked(self) -> bool:
+        """THE check "Eintrag ist gebucht": a Buchung exists, whatever the Buchungssystem.
+
+        A gebuchter Eintrag is locked (see `repository.ensure_not_booked`) until
+        its Buchung is storniert.
+        """
+        return bool(self.external_worklog_id)
+
 
 @dataclass(slots=True)
 class AppState:

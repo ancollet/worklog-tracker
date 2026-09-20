@@ -261,6 +261,48 @@ def list_running_logs(conn: sqlite3.Connection) -> list[LogEntry]:
     return logs
 
 
+class EntryBookedError(Exception):
+    """A gebuchter Eintrag is locked until its Buchung is storniert; nothing was written.
+
+    `log_ids` are the gebuchte Einträge among the `total` entries of the rejected
+    operation.
+    """
+
+    def __init__(self, log_ids: list[int], total: int) -> None:
+        if total == 1:
+            reason = "Eintrag ist gebucht, erst Buchung stornieren"
+        else:
+            reason = f"{len(log_ids)} von {total} Einträgen sind gebucht, erst Buchung stornieren"
+        super().__init__(reason)
+        self.log_ids = log_ids
+        self.total = total
+
+    @property
+    def count(self) -> int:
+        return len(self.log_ids)
+
+
+def booked_log_ids(conn: sqlite3.Connection, log_ids: list[int]) -> list[int]:
+    """Those of `log_ids` that are gebucht (`LogEntry.is_booked`), in the given order."""
+    if not log_ids:
+        return []
+    placeholders = ",".join("?" * len(log_ids))
+    rows = conn.execute(LOG_SELECT + f" WHERE l.id IN ({placeholders})", log_ids).fetchall()
+    booked = {log.id for log in map(_row_to_log, rows) if log.is_booked}
+    return [log_id for log_id in log_ids if log_id in booked]
+
+
+def ensure_not_booked(conn: sqlite3.Connection, log_ids: list[int]) -> None:
+    """Sperr-Regel: every operation that edits, deletes, moves or cleans up entries
+    asks here first. Raises `EntryBookedError` when at least one entry is gebucht,
+    so a bulk operation is rejected as a whole. Flags, Fortsetzen and the
+    Buchungsreferenz itself (Buchen/Stornieren) do not ask.
+    """
+    booked = booked_log_ids(conn, log_ids)
+    if booked:
+        raise EntryBookedError(booked, len(log_ids))
+
+
 def create_log(
     conn: sqlite3.Connection,
     *,
@@ -298,6 +340,7 @@ def update_log(
     duration_seconds: Optional[int],
     rounded_to_minutes: Optional[int],
 ) -> None:
+    ensure_not_booked(conn, [log_id])
     conn.execute(
         """
         UPDATE log_entry
@@ -311,6 +354,7 @@ def update_log(
 
 
 def delete_log(conn: sqlite3.Connection, log_id: int) -> None:
+    ensure_not_booked(conn, [log_id])
     conn.execute("DELETE FROM log_entry WHERE id = ?", (log_id,))
 
 
@@ -595,6 +639,7 @@ def count_logs_with_flag(
 def delete_logs_bulk(conn: sqlite3.Connection, log_ids: list[int]) -> None:
     if not log_ids:
         return
+    ensure_not_booked(conn, log_ids)
     placeholders = ",".join("?" * len(log_ids))
     conn.execute(f"DELETE FROM log_entry WHERE id IN ({placeholders})", log_ids)
 

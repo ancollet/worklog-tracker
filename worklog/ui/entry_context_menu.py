@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import QAbstractItemView, QMenu, QMessageBox, QWidget
 
 from worklog import repository as repo
 from worklog.models import LogEntry
+from worklog.services.booking import cancel_booking, cancel_booking_hint
 from worklog.services.entry_menu import clipboard_text, flag_menu_state, plan_entry_menu
 from worklog.services.timer import (
     AlreadyRunningError,
@@ -21,7 +22,7 @@ from worklog.services.timer import (
     SourceEntryRunningError,
     TimerService,
 )
-from worklog.ui.jira_booking import book_jira, clear_jira_booking
+from worklog.ui.jira_booking import book_jira
 
 
 class _KeepSelectionOnRightClick(QObject):
@@ -51,7 +52,27 @@ def delete_entries(parent: QWidget, conn: sqlite3.Connection, log_ids: list[int]
     confirm = QMessageBox.question(parent, "Löschen?", msg)
     if confirm != QMessageBox.StandardButton.Yes:
         return False
-    repo.delete_logs_bulk(conn, log_ids)
+    try:
+        repo.delete_logs_bulk(conn, log_ids)
+    except repo.EntryBookedError as exc:
+        QMessageBox.warning(
+            parent, "Löschen nicht möglich", f"{exc}.\n\nEs wurde nichts gelöscht."
+        )
+        return False
+    return True
+
+
+def cancel_entry_booking(parent: QWidget, conn: sqlite3.Connection, log_id: int) -> bool:
+    """"Buchung stornieren": ask, then unlock the entry. Returns True when data changed."""
+    log = repo.get_log(conn, log_id)
+    if log is None or not log.is_booked:
+        return False
+    confirm = QMessageBox.question(
+        parent, "Buchung stornieren?", f"{cancel_booking_hint(log)} Fortfahren?"
+    )
+    if confirm != QMessageBox.StandardButton.Yes:
+        return False
+    cancel_booking(conn, log_id)
     return True
 
 
@@ -99,6 +120,10 @@ def build_entry_context_menu(
     header = QAction(plan.header, menu)
     header.setEnabled(False)
     menu.addAction(header)
+    if plan.locked_hint is not None:
+        locked = QAction(f"🔒  {plan.locked_hint}", menu)
+        locked.setEnabled(False)
+        menu.addAction(locked)
     menu.addSeparator()
 
     continue_act = QAction("Fortsetzen ▶", menu)
@@ -127,6 +152,7 @@ def build_entry_context_menu(
     anchor = next((log for log in logs if log.id == move_anchor_id), None)
     if anchor is not None:
         move_act = QAction("⇥  Verschieben auf…", menu)
+        move_act.setEnabled(plan.can_move)
 
         def move(_checked=False, preset=anchor.started_at.date()) -> None:
             from worklog.ui.move_dialog import move_entries
@@ -168,24 +194,25 @@ def build_entry_context_menu(
     manage.triggered.connect(manage_flags)
     flags_menu.addAction(manage)
 
-    if plan.jira_action is not None:
+    if plan.jira_action is not None or plan.can_cancel_booking:
         menu.addSeparator()
-        if plan.jira_action == "unbook":
-            jira_act = QAction("Jira-Buchung lokal entfernen…", menu)
-            jira_fn = clear_jira_booking
+        if plan.can_cancel_booking:
+            booking_act = QAction("Buchung stornieren…", menu)
+            booking_fn = cancel_entry_booking
         else:
-            jira_act = QAction("In Jira buchen…", menu)
-            jira_fn = book_jira
+            booking_act = QAction("In Jira buchen…", menu)
+            booking_fn = book_jira
 
-        def run_jira(_checked=False) -> None:
-            if jira_fn(parent, conn, log_ids[0]):
+        def run_booking(_checked=False) -> None:
+            if booking_fn(parent, conn, log_ids[0]):
                 on_changed()
 
-        jira_act.triggered.connect(run_jira)
-        menu.addAction(jira_act)
+        booking_act.triggered.connect(run_booking)
+        menu.addAction(booking_act)
 
     menu.addSeparator()
     del_act = QAction(plan.delete_label, menu)
+    del_act.setEnabled(plan.can_delete)
 
     def delete(_checked=False) -> None:
         if delete_entries(parent, conn, log_ids):

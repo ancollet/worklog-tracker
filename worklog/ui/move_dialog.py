@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from worklog import repository as repo
 from worklog.services.move import MoveRejectedError, move_entries_to_date
 
 
@@ -57,6 +58,11 @@ def move_entries(
         return False
     try:
         move_entries_to_date(conn, log_ids, dlg.selected_date())
+    except repo.EntryBookedError as exc:
+        QMessageBox.warning(
+            parent, "Verschieben nicht möglich", f"{exc}.\n\nEs wurde nichts verschoben."
+        )
+        return False
     except MoveRejectedError as exc:
         show_move_rejected(parent, exc)
         return False

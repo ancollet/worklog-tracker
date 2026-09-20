@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from worklog.models import LogEntry
+from worklog.repository import EntryBookedError
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,8 +14,13 @@ class EntryMenuPlan:
     can_continue: bool
     can_edit: bool
     can_copy_description: bool
-    jira_action: Optional[str]  # "book" | "unbook" | None
+    can_move: bool
+    can_delete: bool
+    jira_action: Optional[str]  # "book" | None
+    can_cancel_booking: bool  # "Buchung stornieren"
     delete_label: str
+    # Sperr-Regel: why edit/move/delete are disabled (gebuchte Einträge), else None
+    locked_hint: Optional[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,18 +40,26 @@ def target_log_ids(clicked_id: int, selected_ids: list[int]) -> list[int]:
 
 def plan_entry_menu(logs: list[LogEntry]) -> EntryMenuPlan:
     n = len(logs)
+    # Sperr-Regel: one gebuchter Eintrag locks the whole selection.
+    booked_ids = [int(log.id) for log in logs if log.is_booked]
+    locked = bool(booked_ids)
     jira_action = None
-    # Booking is always exactly one entry of a Jira customer.
-    if n == 1 and logs[0].customer_booking_system == "jira":
-        jira_action = "unbook" if logs[0].external_worklog_id else "book"
+    # Booking is always exactly one, not yet gebuchter, entry of a Jira customer.
+    if n == 1 and not locked and logs[0].customer_booking_system == "jira":
+        jira_action = "book"
     return EntryMenuPlan(
         header=f"{n} Eintrag ausgewählt" if n == 1 else f"{n} Einträge ausgewählt",
         # Fortsetzen: exactly one entry, and not one that is still running.
         can_continue=n == 1 and logs[0].ended_at is not None,
-        can_edit=n == 1,
+        can_edit=n == 1 and not locked,
         can_copy_description=bool(clipboard_text(logs)),
+        can_move=not locked,
+        can_delete=not locked,
         jira_action=jira_action,
+        # Stornieren is always exactly one entry, whatever its Buchungssystem.
+        can_cancel_booking=n == 1 and locked,
         delete_label="⌫  Löschen" if n == 1 else f"⌫  {n} Einträge löschen",
+        locked_hint=str(EntryBookedError(booked_ids, n)) if locked else None,
     )
 
 
