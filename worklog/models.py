@@ -32,6 +32,8 @@ class Project:
     external_name: Optional[str] = None          # name of the connected Salesforce-Projekt (shown instead of the ID)
     default_service_type: Optional[str] = None   # Service Type preset for Buchungen of this Projekt
     customer_request_type: Optional[str] = None  # Customer Request Type (free text, optional)
+    closed_in_salesforce: bool = False           # Kennzeichen of the last Abgleich: the Salesforce-Projekt is geschlossen
+    salesforce_checked_at: Optional[datetime] = None  # time of the last Abgleich; None = never checked
 
     @property
     def display_name(self) -> str:

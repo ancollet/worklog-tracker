@@ -9,7 +9,8 @@ from typing import Iterator
 
 from worklog.paths import db_path
 
-SCHEMA_VERSION = 8  # 6 = Snippets, 7 = Salesforce-Account registrieren, 8 = Projekte registrieren
+SCHEMA_VERSION = 9  # 6 = Snippets, 7 = Salesforce-Account registrieren, 8 = Projekte registrieren,
+                    # 9 = Abgleich geschlossener Projekte
 
 INITIAL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -153,6 +154,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _create_snippet_table(conn)
         _migrate_to_7_salesforce_account(conn)
         _migrate_to_8_salesforce_projects(conn)
+        _migrate_to_9_salesforce_closed_projects(conn)
     elif current < SCHEMA_VERSION:
         if current < 3:
             # v2 introduced auto-seeded flags; v3 removes them again. Drop the
@@ -184,6 +186,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
             _migrate_to_7_salesforce_account(conn)
         if current < 8:
             _migrate_to_8_salesforce_projects(conn)
+        if current < 9:
+            _migrate_to_9_salesforce_closed_projects(conn)
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
 
@@ -327,3 +331,19 @@ def _migrate_to_8_salesforce_projects(conn: sqlite3.Connection) -> None:
         """
     )
 
+
+# ---------- Schritt "→ 9": Abgleich geschlossener Projekte ----------
+
+def _migrate_to_9_salesforce_closed_projects(conn: sqlite3.Connection) -> None:
+    """What the last Abgleich found out about a registriertes Projekt.
+
+    Idempotent and independent of every other step; runs for fresh databases too.
+
+    `salesforce_closed` is the Kennzeichen "in Salesforce geschlossen",
+    `salesforce_checked_at` the time of the last Abgleich (empty: never checked).
+    Nothing is marked by the migration itself — only an Abgleich knows.
+    """
+    if not _has_column(conn, "project", "salesforce_closed"):
+        conn.execute("ALTER TABLE project ADD COLUMN salesforce_closed INTEGER NOT NULL DEFAULT 0")
+    if not _has_column(conn, "project", "salesforce_checked_at"):
+        conn.execute("ALTER TABLE project ADD COLUMN salesforce_checked_at TEXT")
