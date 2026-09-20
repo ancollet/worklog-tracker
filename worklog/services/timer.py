@@ -24,6 +24,20 @@ class AlreadyRunningError(Exception):
         self.entry = entry
 
 
+class ProjectArchivedError(Exception):
+    """Fortsetzen abgelehnt: das Projekt des Eintrags ist archiviert."""
+
+    def __init__(self) -> None:
+        super().__init__("Projekt ist archiviert")
+
+
+class SourceEntryRunningError(Exception):
+    """Fortsetzen abgelehnt: der Quell-Eintrag läuft selbst noch."""
+
+    def __init__(self) -> None:
+        super().__init__("Eintrag läuft selbst noch")
+
+
 def _norm(value: Optional[str]) -> str:
     """Vergleichsform für die Duplikat-Prüfung: getrimmt; leer == nicht gesetzt."""
     return (value or "").strip()
@@ -73,6 +87,30 @@ class TimerService:
         assert log is not None
         return log
 
+    def continue_entry(self, log_id: int) -> LogEntry:
+        """Fortsetzen: neuer, jetzt laufender Eintrag mit Projekt, Task und Beschreibung
+        des Eintrags `log_id`. Flags und Buchungsfelder werden nicht übernommen, der
+        Quell-Eintrag bleibt unverändert, kein anderer Eintrag wird gestoppt.
+
+        Wirft SourceEntryRunningError, wenn der Quell-Eintrag selbst läuft,
+        ProjectArchivedError, wenn sein Projekt (oder dessen Kunde) archiviert ist,
+        AlreadyRunningError, wenn ein identischer Eintrag bereits läuft, und
+        LookupError, wenn es den Eintrag nicht gibt.
+        """
+        source = repo.get_log(self.conn, log_id)
+        if source is None:
+            raise LookupError(f"Eintrag {log_id} existiert nicht")
+        if source.ended_at is None:
+            raise SourceEntryRunningError()
+        project = repo.get_project(self.conn, source.project_id)
+        assert project is not None
+        customer = repo.get_customer(self.conn, project.customer_id)
+        if project.archived or (customer is not None and customer.archived):
+            raise ProjectArchivedError()
+        return self.start_entry(
+            project_id=source.project_id, task=source.task, description=source.description
+        )
+
     def stop_entry(self, log_id: int) -> Optional[LogEntry]:
         """Stoppt genau diesen laufenden Eintrag; andere laufen weiter.
 
@@ -93,16 +131,6 @@ class TimerService:
                 self._stop_locked(log_id)
         stopped = [repo.get_log(self.conn, log_id) for log_id in ids]
         return [log for log in stopped if log is not None]
-
-    # ---- Rest der alten Schnittstelle: nur noch das Fortsetzen im Logs-Tab (Ticket 04) ----
-
-    def start(self, *, project_id: int, task: Optional[str], description: Optional[str]) -> LogEntry:
-        """Wie start_entry (stoppt nie); läuft der identische Eintrag bereits,
-        wird dieser zurückgegeben statt eines Fehlers."""
-        try:
-            return self.start_entry(project_id=project_id, task=task, description=description)
-        except AlreadyRunningError as exc:
-            return exc.entry
 
     def _stop_locked(self, log_id: int) -> None:
         log = repo.get_log(self.conn, log_id)

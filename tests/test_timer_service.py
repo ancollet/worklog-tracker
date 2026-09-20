@@ -188,26 +188,6 @@ def test_running_is_derived_from_data_not_from_app_state_pointer(conn):
     assert [log.id for log in svc.running_entries()] == [second.id]
 
 
-# ---- Rest der alten Schnittstelle: start() für das Fortsetzen im Logs-Tab (bis Ticket 04) ----
-
-
-def test_legacy_start_never_stops_running_entries(conn):
-    p = _project(conn)
-    svc = TimerService(conn)
-    first = svc.start(project_id=p.id, task="A", description=None)
-    second = svc.start(project_id=p.id, task="B", description=None)
-    assert [log.id for log in svc.running_entries()] == [first.id, second.id]
-
-
-def test_legacy_start_of_identical_entry_returns_running_one(conn):
-    p = _project(conn)
-    svc = TimerService(conn)
-    first = svc.start(project_id=p.id, task="A", description=None)
-    again = svc.start(project_id=p.id, task=" A ", description="")
-    assert again.id == first.id
-    assert len(svc.running_entries()) == 1
-
-
 def test_sums_count_every_parallel_entry_with_full_duration(conn):
     p = _project(conn)
     svc = TimerService(conn)
@@ -220,7 +200,8 @@ def test_sums_count_every_parallel_entry_with_full_duration(conn):
 
 def test_single_timer_interface_is_gone(conn):
     # Contract-Schritt (Ticket 03): kein "aktueller Eintrag", kein Wechseln,
-    # kein Aktualisieren des laufenden Eintrags, kein Stoppen ohne ID.
+    # kein Aktualisieren des laufenden Eintrags, kein Stoppen ohne ID; seit
+    # Ticket 04 auch kein start() mehr (Starten = start_entry, Fortsetzen = continue_entry).
     svc = TimerService(conn)
-    for name in ("current", "is_running", "stop", "update_running", "switch"):
+    for name in ("current", "is_running", "start", "stop", "update_running", "switch"):
         assert not hasattr(svc, name), name

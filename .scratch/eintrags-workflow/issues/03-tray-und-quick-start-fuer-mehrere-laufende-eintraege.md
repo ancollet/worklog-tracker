@@ -18,7 +18,7 @@ Spec: `.scratch/eintrags-workflow/spec.md` (Stories 9–13).
 - [x] Das Quick-Add-Popup hat nur noch den Modus Start; ein blockierter Doppelstart zeigt "läuft bereits".
 - [x] Ein eventuell vorhandener globaler Hotkey öffnet Quick-Start statt einen Timer umzuschalten.
   - Es gibt keinen globalen Hotkey in der App; `worklog --quick` (IPC) öffnet Quick-Start, der Mittelklick aufs Tray-Icon ebenfalls (schaltet nichts mehr um).
-- [ ] Die alte Ein-Timer-Schnittstelle (aktueller Eintrag, wechseln, laufenden Eintrag aktualisieren, Stoppen ohne ID) ist entfernt; kein Aufrufer liest oder schreibt mehr den Einzelzeiger im App-Zustand.
+- [x] Die alte Ein-Timer-Schnittstelle (aktueller Eintrag, wechseln, laufenden Eintrag aktualisieren, Stoppen ohne ID) ist entfernt; kein Aufrufer liest oder schreibt mehr den Einzelzeiger im App-Zustand.
   - Offen: `current`, `is_running`, `stop()` ohne ID, `update_running`, `switch` sind entfernt; den Einzelzeiger liest oder schreibt kein Aufrufer mehr. Übrig ist nur `TimerService.start()`, weil das Fortsetzen im Logs-Tab (`logs_view._resume`) es noch aufruft; das Entfernen gehört zu Ticket 04.
 - [x] Timer-Tab, Tray-Menü und Logs-Tab bleiben nach Start/Stopp aus jeder dieser Stellen synchron.
 - [ ] Tests laufen grün; Tray und Popup sind von Hand geprüft.

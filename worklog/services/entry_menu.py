@@ -10,6 +10,7 @@ from worklog.models import LogEntry
 @dataclass(frozen=True, slots=True)
 class EntryMenuPlan:
     header: str
+    can_continue: bool
     can_edit: bool
     jira_action: Optional[str]  # "book" | "unbook" | None
     delete_label: str
@@ -38,6 +39,8 @@ def plan_entry_menu(logs: list[LogEntry]) -> EntryMenuPlan:
         jira_action = "unbook" if logs[0].external_worklog_id else "book"
     return EntryMenuPlan(
         header=f"{n} Eintrag ausgewählt" if n == 1 else f"{n} Einträge ausgewählt",
+        # Fortsetzen: exactly one entry, and not one that is still running.
+        can_continue=n == 1 and logs[0].ended_at is not None,
         can_edit=n == 1,
         jira_action=jira_action,
         delete_label="⌫  Löschen" if n == 1 else f"⌫  {n} Einträge löschen",

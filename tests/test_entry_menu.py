@@ -4,11 +4,12 @@ from worklog.models import LogEntry
 from worklog.services.entry_menu import flag_menu_state, plan_entry_menu, target_log_ids
 
 
-def _entry(log_id: int, *, booking_system=None, worklog_id=None) -> LogEntry:
+def _entry(log_id: int, *, booking_system=None, worklog_id=None, running=False) -> LogEntry:
     t = datetime(2026, 5, 8, 10, tzinfo=timezone.utc)
     return LogEntry(
         id=log_id, project_id=1, task="DIS-1", description="x",
-        started_at=t, ended_at=t, duration_seconds=900, rounded_to_minutes=15,
+        started_at=t, ended_at=None if running else t,
+        duration_seconds=None if running else 900, rounded_to_minutes=15,
         customer_booking_system=booking_system, external_worklog_id=worklog_id,
     )
 
@@ -59,7 +60,27 @@ def test_jira_actions_only_for_exactly_one_entry():
     assert plan_entry_menu(logs).jira_action is None
 
 
+# ---------- Fortsetzen ----------
+
+def test_single_finished_entry_can_be_continued():
+    assert plan_entry_menu([_entry(1)]).can_continue is True
+
+
+def test_continue_is_disabled_for_multiple_entries():
+    assert plan_entry_menu([_entry(1), _entry(2)]).can_continue is False
+
+
+def test_continue_is_disabled_on_a_running_entry():
+    assert plan_entry_menu([_entry(1, running=True)]).can_continue is False
+
+
+def test_booked_entry_can_be_continued():
+    plan = plan_entry_menu([_entry(1, booking_system="jira", worklog_id="4711")])
+    assert plan.can_continue is True
+
+
 # ---------- Flag-Zustand ----------
+
 
 def test_flag_on_all_entries_is_checked_and_click_removes_it():
     state = flag_menu_state("abgerechnet", have=3, total=3)
