@@ -20,6 +20,7 @@ SERVICE_NAME = "worklog"
 
 # Keys are stored under a single service name; the username field distinguishes systems.
 JIRA_TOKEN_KEY = "jira:api_token"
+SALESFORCE_SECRET_KEY = "salesforce:consumer_secret"
 
 
 class CredentialsUnavailableError(RuntimeError):
@@ -56,3 +57,11 @@ def get_jira_token() -> Optional[str]:
 
 def set_jira_token(token: Optional[str]) -> None:
     set_secret(JIRA_TOKEN_KEY, token)
+
+
+def get_salesforce_secret() -> Optional[str]:
+    return get_secret(SALESFORCE_SECRET_KEY)
+
+
+def set_salesforce_secret(secret: Optional[str]) -> None:
+    set_secret(SALESFORCE_SECRET_KEY, secret)
