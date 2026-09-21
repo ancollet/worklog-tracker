@@ -11,12 +11,14 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QDoubleSpinBox,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTreeWidget,
     QTreeWidgetItem,
     QTreeWidgetItemIterator,
@@ -370,6 +372,8 @@ class RunningList(QTreeWidget):
     COLUMNS = ["Projekt", "Task", "Beschreibung", "Läuft", ""]
     COL_PROJECT, COL_TASK, COL_DESC, COL_CLOCK, COL_STOP = range(5)
     MAX_VISIBLE_ROWS = 6
+    ROW_BACKGROUND = "#ECFDF5"
+    ROW_FOREGROUND = "#064E3B"
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -401,6 +405,9 @@ class RunningList(QTreeWidget):
             item.setTextAlignment(
                 self.COL_CLOCK, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
+            for col in range(len(self.COLUMNS)):
+                item.setBackground(col, QColor(self.ROW_BACKGROUND))
+                item.setForeground(col, QColor(self.ROW_FOREGROUND))
             self.addTopLevelItem(item)
             self.setItemWidget(item, self.COL_PROJECT, _make_project_chip_widget(log))
             stop_button = QPushButton("⏸ Stop")
@@ -446,6 +453,9 @@ class RunningList(QTreeWidget):
 class TimerWidget(QWidget):
     changed = pyqtSignal()
 
+    ACTION_BUTTON_WIDTH = 140
+    ACTION_ROW_HEIGHT = 48
+
     def __init__(self, conn: sqlite3.Connection, timer: TimerService, parent=None) -> None:
         super().__init__(parent)
         self.conn = conn
@@ -463,15 +473,16 @@ class TimerWidget(QWidget):
         self.task_input.setCompleter(self.task_completer)
         self.desc_input.setCompleter(self.desc_completer)
 
-        self.running_label = QLabel("Läuft gerade   ·   Doppelklick zum Bearbeiten")
-        self.running_label.setStyleSheet("color: #6B7280;")
+        self.running_label = QLabel("")
+        self.running_label.setStyleSheet("color: #047857; font-weight: bold;")
         self.running_list = RunningList(self)
         self.running_list.edit_requested.connect(self._edit_log)
         self.running_list.stop_requested.connect(self._stop_entry)
 
         self.start_button = QPushButton("▶ Start")
         self.start_button.setToolTip("Startet einen neuen Eintrag; laufende Einträge laufen weiter (Ctrl+S).")
-        self.start_button.setMinimumHeight(48)
+        self.start_button.setMinimumSize(self.ACTION_BUTTON_WIDTH, self.ACTION_ROW_HEIGHT)
+        self.start_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.start_button.clicked.connect(self.start_from_form)
 
         self.start_hint = QLabel("")
@@ -486,13 +497,16 @@ class TimerWidget(QWidget):
         self.quick_duration.setMaximum(24.0)
         self.quick_duration.setValue(1.0)
         self.quick_duration.setToolTip("Dauer für Schnell-Buchung")
+        self.quick_duration.setMinimumHeight(self.ACTION_ROW_HEIGHT)
+        self.quick_duration.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
         self.quick_log_button = QPushButton("+ Buchen")
         self.quick_log_button.setToolTip(
             "Erstellt einen Log-Eintrag mit den aktuellen Feldern und der angegebenen Dauer "
             "(endet jetzt, Start = jetzt − Dauer)."
         )
-        self.quick_log_button.setMinimumHeight(48)
+        self.quick_log_button.setMinimumSize(self.ACTION_BUTTON_WIDTH, self.ACTION_ROW_HEIGHT)
+        self.quick_log_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.quick_log_button.clicked.connect(self.quick_log)
 
         self.add_log_button = QPushButton("+ Add Log…")
@@ -515,31 +529,29 @@ class TimerWidget(QWidget):
         # Layout
         outer = QVBoxLayout(self)
 
-        outer.addWidget(self.running_label)
-        outer.addWidget(self.running_list)
-
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Projekt:"))
-        row.addWidget(self.project_combo, 1)
-        outer.addLayout(row)
-
-        row2 = QHBoxLayout()
-        row2.addWidget(QLabel("Task:"))
-        row2.addWidget(self.task_input, 1)
-        outer.addLayout(row2)
-
-        row3 = QHBoxLayout()
-        row3.addWidget(QLabel("Beschr.:"))
-        row3.addWidget(with_snippet_button(conn, self.desc_input), 1)
-        outer.addLayout(row3)
+        # One grid: the labels share a column, so the fields and the button row
+        # below them start and end on the same edges.
+        form = QGridLayout()
+        form.setColumnStretch(1, 1)
+        form.addWidget(QLabel("Projekt:"), 0, 0)
+        form.addWidget(self.project_combo, 0, 1)
+        form.addWidget(QLabel("Task:"), 1, 0)
+        form.addWidget(self.task_input, 1, 1)
+        form.addWidget(QLabel("Beschr.:"), 2, 0)
+        form.addWidget(with_snippet_button(conn, self.desc_input), 2, 1)
 
         timer_row = QHBoxLayout()
         timer_row.addWidget(self.start_button)
-        timer_row.addWidget(self.start_hint, 1)
-        timer_row.addSpacing(16)
+        timer_row.addWidget(self.start_hint)
+        timer_row.addStretch(1)  # the hint is usually hidden and cannot carry the stretch
         timer_row.addWidget(self.quick_duration)
         timer_row.addWidget(self.quick_log_button)
-        outer.addLayout(timer_row)
+        form.addLayout(timer_row, 3, 1)
+        outer.addLayout(form)
+
+        # "Läuft gerade" sits right below Start, above the Baumansicht.
+        outer.addWidget(self.running_label)
+        outer.addWidget(self.running_list)
 
         outer.addWidget(self.summary_label)
 
@@ -696,6 +708,9 @@ class TimerWidget(QWidget):
     def _reload_running(self) -> None:
         running = self.timer.running_entries()
         self.running_list.populate(running)
+        self.running_label.setText(
+            f"● Läuft gerade ({len(running)})   ·   Doppelklick zum Bearbeiten"
+        )
         self.running_label.setVisible(bool(running))
         self.running_list.setVisible(bool(running))
 

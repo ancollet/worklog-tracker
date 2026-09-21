@@ -310,3 +310,24 @@ def test_clean_descriptions_is_disabled_when_no_entry_is_cleanable():
     assert plan.clean_descriptions_hint == (
         "Kein Eintrag der Auswahl ist bereinigbar (gebucht oder ohne Beschreibung)."
     )
+
+
+# ---------- Klonen ----------
+
+def test_clone_is_offered_for_exactly_one_finished_entry():
+    assert plan_entry_menu([_entry(1)]).can_clone is True
+    assert plan_entry_menu([_entry(1), _entry(2)]).can_clone is False
+    assert plan_entry_menu([_entry(1, running=True)]).can_clone is False
+
+
+def test_clone_stays_possible_for_booked_entry():
+    plan = plan_entry_menu([_entry(1, booking_system="jira", worklog_id="10001")])
+    assert plan.can_clone is True
+
+
+# ---------- Stoppen ----------
+
+def test_stop_is_offered_as_soon_as_a_running_entry_is_selected():
+    assert plan_entry_menu([_entry(1, running=True)]).running_ids == [1]
+    assert plan_entry_menu([_entry(1), _entry(2, running=True)]).running_ids == [2]
+    assert plan_entry_menu([_entry(1)]).running_ids == []

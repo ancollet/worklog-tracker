@@ -13,6 +13,8 @@ from worklog.services.bulk_cleanup import skip_reason
 class EntryMenuPlan:
     header: str
     can_continue: bool
+    can_clone: bool
+    running_ids: list[int]  # "Stoppen": the laufenden Einträge of the selection
     can_edit: bool
     can_copy_description: bool
     can_move: bool
@@ -80,6 +82,9 @@ def plan_entry_menu(
         header=f"{n} Eintrag ausgewählt" if n == 1 else f"{n} Einträge ausgewählt",
         # Fortsetzen: exactly one entry, and not one that is still running.
         can_continue=n == 1 and logs[0].ended_at is not None,
+        # Klonen: like Fortsetzen, and the copy is ungebucht — a gebuchter Eintrag may be cloned.
+        can_clone=n == 1 and logs[0].ended_at is not None,
+        running_ids=[int(log.id) for log in logs if log.ended_at is None],
         can_edit=n == 1 and not locked,
         can_copy_description=bool(clipboard_text(logs)),
         can_move=not locked,

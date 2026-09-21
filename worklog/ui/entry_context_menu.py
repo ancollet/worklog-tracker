@@ -24,6 +24,7 @@ from worklog.services.timer import (
     ProjectArchivedError,
     SourceEntryRunningError,
     TimerService,
+    clone_entry as clone_entry_service,
 )
 from worklog.ui.jira_booking import book_jira
 from worklog.ui.salesforce_booking import book_salesforce
@@ -105,6 +106,19 @@ def continue_entry(parent: QWidget, conn: sqlite3.Connection, log_id: int) -> bo
     return False
 
 
+def clone_entry(parent: QWidget, conn: sqlite3.Connection, log_id: int) -> bool:
+    """Klonen via the timer service; a refusal is shown as a hint. Returns True when cloned."""
+    try:
+        clone_entry_service(conn, log_id)
+    except SourceEntryRunningError:
+        QMessageBox.information(parent, "Klonen", "Dieser Eintrag läuft noch.")
+    except LookupError:
+        QMessageBox.information(parent, "Klonen", "Dieser Eintrag existiert nicht mehr.")
+    else:
+        return True
+    return False
+
+
 def build_entry_context_menu(
     parent: QWidget,
     conn: sqlite3.Connection,
@@ -156,6 +170,32 @@ def build_entry_context_menu(
 
     continue_act.triggered.connect(continue_)
     menu.addAction(continue_act)
+
+    if plan.running_ids:
+        stop_act = QAction(
+            "⏸  Stoppen" if len(plan.running_ids) == 1
+            else f"⏸  {len(plan.running_ids)} laufende Einträge stoppen",
+            menu,
+        )
+
+        def stop(_checked=False) -> None:
+            timer = TimerService(conn)
+            for running_id in plan.running_ids:
+                timer.stop_entry(running_id)
+            on_changed()
+
+        stop_act.triggered.connect(stop)
+        menu.addAction(stop_act)
+
+    clone_act = QAction("⎘  Klonen", menu)
+    clone_act.setEnabled(plan.can_clone)
+
+    def clone(_checked=False) -> None:
+        if clone_entry(parent, conn, log_ids[0]):
+            on_changed()
+
+    clone_act.triggered.connect(clone)
+    menu.addAction(clone_act)
 
     edit_act = QAction("✎  Bearbeiten…", menu)
     edit_act.setEnabled(plan.can_edit)

@@ -14,7 +14,11 @@ _Avoid_: aktiver Timer, der Timer
 
 **Fortsetzen**:
 Aus einem bestehenden Eintrag einen neuen, jetzt laufenden Eintrag mit demselben Projekt, Task und derselben Beschreibung erzeugen. Der ursprüngliche Eintrag bleibt unverändert, Flags werden nicht übernommen, andere laufende Einträge laufen weiter.
-_Avoid_: Resume, Klonen, Neustarten
+_Avoid_: Resume, Neustarten
+
+**Klonen**:
+Aus einem beendeten Eintrag eine Kopie mit demselben Projekt, Task, derselben Beschreibung und derselben Zeit erzeugen. Der ursprüngliche Eintrag bleibt unverändert; Flags und Buchung werden nicht übernommen, der Klon ist ungebucht.
+_Avoid_: Duplizieren, Kopieren (meint die Beschreibung in die Zwischenablage)
 
 **Verschieben**:
 Einen Eintrag auf einen anderen Tag legen; Uhrzeit und Dauer bleiben erhalten.
@@ -25,7 +29,7 @@ Die Übertragung genau eines Eintrags in das Buchungssystem des Kunden: bei Jira
 _Avoid_: Sync, Export
 
 **Gebucht**:
-Zustand eines Eintrags mit bestehender Buchung. Ein gebuchter Eintrag ist gesperrt: er kann nicht bearbeitet, verschoben, gelöscht oder bereinigt werden, bis die Buchung storniert ist. Fortsetzen und Kopieren bleiben möglich.
+Zustand eines Eintrags mit bestehender Buchung. Ein gebuchter Eintrag ist gesperrt: er kann nicht bearbeitet, verschoben, gelöscht oder bereinigt werden, bis die Buchung storniert ist. Fortsetzen, Klonen und Kopieren bleiben möglich.
 
 **Stornieren**:
 Eine Buchung aufheben und den Eintrag wieder freigeben. Bei Salesforce wird die Kostenposition dort gelöscht; bei Jira wird nur die lokale Referenz entfernt, der Worklog bleibt in Jira bestehen.

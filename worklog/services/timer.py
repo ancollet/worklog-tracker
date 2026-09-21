@@ -189,3 +189,30 @@ def manual_log(
         rounded_to_minutes=effective_round,
         is_manual=True,
     )
+
+
+def clone_entry(conn: sqlite3.Connection, log_id: int) -> int:
+    """Klonen: neuer, beendeter Eintrag mit Projekt, Task, Beschreibung und Zeit des
+    Eintrags `log_id`. Flags und Buchungsfelder werden nicht übernommen, der
+    Quell-Eintrag bleibt unverändert.
+
+    Wirft SourceEntryRunningError, wenn der Quell-Eintrag noch läuft, und
+    LookupError, wenn es den Eintrag nicht gibt.
+    """
+    source = repo.get_log(conn, log_id)
+    if source is None:
+        raise LookupError(f"Eintrag {log_id} existiert nicht")
+    if source.ended_at is None:
+        raise SourceEntryRunningError()
+    with transaction(conn):
+        return repo.create_log(
+            conn,
+            project_id=source.project_id,
+            task=source.task,
+            description=source.description,
+            started_at=source.started_at.isoformat(timespec="seconds"),
+            ended_at=source.ended_at.isoformat(timespec="seconds"),
+            duration_seconds=source.duration_seconds,
+            rounded_to_minutes=source.rounded_to_minutes,
+            is_manual=source.is_manual,
+        )
