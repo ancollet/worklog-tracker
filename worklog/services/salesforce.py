@@ -42,7 +42,8 @@ COST_ITEM_QUANTITY_FIELD = "Quantity__c"                 # Menge in hours
 COST_ITEM_DELIVERY_DATE_FIELD = "DeliveryDate__c"        # Delivery Date (date only)
 COST_ITEM_DESCRIPTION_FIELD = "Description__c"           # Beschreibung
 COST_ITEM_SERVICE_TYPE_FIELD = "ServiceType__c"          # Service Type picklist
-COST_ITEM_REQUEST_TYPE_FIELD = "CustomerRequestType__c"  # Customer Request Type (free text)
+COST_ITEM_REQUEST_TYPE_FIELD = "CustomerRequestType__c"  # Customer Request Type (free text); a validation
+# rule demands it on Projekte with CustomerRequestIsMandatorry__c ("Please Enter a Request Type …")
 COST_ITEM_STATUS_FIELD = "Status__c"                     # status picklist
 COST_ITEM_SKILL_LEVEL_FIELD = "SkillLevel__c"            # Skill Level picklist
 COST_ITEM_LOCATION_FIELD = "Location__c"                 # Location picklist
@@ -423,9 +424,9 @@ class SalesforceClient:
         usual SalesforceError for Netz, Anmeldung and other org errors. In every case
         but the first the Kostenposition still exists.
 
-        ANNAHMEN, in Ticket 03 zu bestätigen: the Integrations-User sees every Kostenposition
+        Am 21.09.2026 in der Sandbox bestätigt: the Integrations-User sees every Kostenposition
         (a record hidden from him would look "not found"), may delete those in status Open,
-        and a successful DELETE answers 204 without a body.
+        and a successful DELETE answers without a body.
         """
         cost_item_id = cost_item_id.strip()
         if not _is_salesforce_id(cost_item_id):
