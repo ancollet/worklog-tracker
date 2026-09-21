@@ -37,6 +37,7 @@ from worklog.ui.completers import (
 )
 from worklog.ui.llm_cleanup import CleanupButton
 from worklog.ui.snippet_button import with_snippet_button
+from worklog.ui.theme import set_role
 
 ROUNDING_CHOICES = [
     ("Default", None),
@@ -155,11 +156,11 @@ class LogDialog(QDialog):
         outer.addLayout(mode_row)
         outer.addWidget(self.stack)
         self.running_hint = QLabel("Läuft gerade · Ende und Dauer entstehen erst beim Stoppen.")
-        self.running_hint.setStyleSheet("color: #6B7280;")
+        set_role(self.running_hint, "muted")
         self.running_hint.setVisible(False)
         outer.addWidget(self.running_hint)
         self.booked_hint = QLabel("")
-        self.booked_hint.setStyleSheet("color: #B45309;")
+        set_role(self.booked_hint, "warn")
         self.booked_hint.setVisible(False)
         outer.addWidget(self.booked_hint)
 

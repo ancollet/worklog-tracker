@@ -48,7 +48,7 @@ from worklog.services.salesforce_settings import (
 )
 from worklog.ui.llm_cleanup import LlmCall, start_llm_call
 from worklog.ui.salesforce_call import SalesforceCall, start_salesforce_call
-from worklog.ui.theme import DEFAULT_UI_THEME, SETTINGS_UI_THEME, THEMES, apply_theme
+from worklog.ui.theme import DEFAULT_UI_THEME, SETTINGS_UI_THEME, THEMES, apply_theme, set_role, set_status
 
 ROUNDING_CHOICES = [
     ("Aus", 0),
@@ -122,7 +122,7 @@ class SettingsDialog(QDialog):
         self.jira_test_btn = QPushButton("Verbindung testen")
         self.jira_test_btn.clicked.connect(self._test_jira)
         self.jira_status = QLabel("")
-        self.jira_status.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self.jira_status, "hint")
         self.jira_status.setWordWrap(True)
 
         jira_form = QFormLayout()
@@ -138,7 +138,7 @@ class SettingsDialog(QDialog):
             "Token erstellen unter id.atlassian.com → Manage profile → Security → API tokens. "
             "Token wird im OS-Keyring gespeichert, nicht in der DB."
         )
-        jira_hint.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(jira_hint, "hint")
         jira_hint.setWordWrap(True)
         jira_form.addRow("", jira_hint)
         jira_group = QGroupBox("Jira")
@@ -229,7 +229,7 @@ class SettingsDialog(QDialog):
             "Anmeldung über die External Client App mit dem gemeinsamen Integrations-User "
             "(Client-Credentials). Das Consumer Secret wird im OS-Keyring gespeichert, nicht in der DB."
         )
-        sf_hint.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(sf_hint, "hint")
         sf_hint.setWordWrap(True)
         sf_form.addRow("", sf_hint)
         sf_group = QGroupBox("Salesforce")
@@ -285,7 +285,7 @@ class SettingsDialog(QDialog):
             "Azure OpenAI / Foundry (v1-Schnittstelle). Gesendet werden nur Systemprompt, Task und "
             "Beschreibung. Der API-Key wird im OS-Keyring gespeichert, nicht in der DB."
         )
-        llm_hint.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(llm_hint, "hint")
         llm_hint.setWordWrap(True)
         llm_form.addRow("", llm_hint)
         llm_group = QGroupBox("LLM")
@@ -380,27 +380,26 @@ class SettingsDialog(QDialog):
         token = self.jira_token.text() or self._existing_jira_token
         if not (base_url and email and token):
             self.jira_status.setText("Base-URL, Email und Token erforderlich.")
-            self.jira_status.setStyleSheet("color: #b91c1c; font-size: 11px;")
+            set_status(self.jira_status, "error")
             return
         self.jira_status.setText("Teste…")
-        self.jira_status.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self.jira_status, "hint")
         self.jira_test_btn.setEnabled(False)
         try:
             who = jira_client.test_connection(
                 jira_client.JiraCredentials(base_url=base_url, email=email, api_token=token)
             )
             self.jira_status.setText(f"OK — angemeldet als {who}.")
-            self.jira_status.setStyleSheet("color: #15803d; font-size: 11px;")
+            set_status(self.jira_status, "ok")
         except jira_client.JiraError as exc:
             self.jira_status.setText(f"Fehler: {exc}")
-            self.jira_status.setStyleSheet("color: #b91c1c; font-size: 11px;")
+            set_status(self.jira_status, "error")
         finally:
             self.jira_test_btn.setEnabled(True)
 
     def _set_sf_status(self, text: str, kind: str) -> None:
-        color = {"ok": "#15803d", "error": "#b91c1c"}.get(kind, "gray")
         self.sf_status.setText(text)
-        self.sf_status.setStyleSheet(f"color: {color}; font-size: 11px;")
+        set_status(self.sf_status, kind)
 
     def _sf_connection_input(self) -> tuple[sf_client.SalesforceCredentials | None, list[str]]:
         """What is typed into the dialog right now — saved or not — and what is missing."""
@@ -441,9 +440,8 @@ class SettingsDialog(QDialog):
     # ---- leistende Person ----
 
     def _set_sf_person_status(self, text: str, kind: str = "neutral") -> None:
-        color = {"ok": "#15803d", "error": "#b91c1c"}.get(kind, "gray")
         self.sf_person_status.setText(text)
-        self.sf_person_status.setStyleSheet(f"color: {color}; font-size: 11px;")
+        set_status(self.sf_person_status, kind)
 
     def _set_sf_person(self, person: LeistendePerson | None) -> None:
         self._sf_person = person
@@ -510,9 +508,8 @@ class SettingsDialog(QDialog):
     # ---- LLM ----
 
     def _set_llm_status(self, text: str, kind: str) -> None:
-        color = {"ok": "#15803d", "error": "#b91c1c"}.get(kind, "gray")
         self.llm_status.setText(text)
-        self.llm_status.setStyleSheet(f"color: {color}; font-size: 11px;")
+        set_status(self.llm_status, kind)
 
     def _reset_llm_prompt(self) -> None:
         self.llm_prompt.setPlainText(llm_cleanup.DEFAULT_SYSTEM_PROMPT)

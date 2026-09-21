@@ -45,6 +45,7 @@ from worklog.ui.completers import (
 from worklog.ui.entry_context_menu import build_entry_context_menu, keep_selection_on_right_click
 from worklog.ui.move_dialog import MOVE_REJECTIONS, show_move_rejected
 from worklog.ui.snippet_button import with_snippet_button
+from worklog.ui.theme import color, set_role
 
 CLOCKWORK_URL = (
     "https://igusdev.atlassian.net/plugins/servlet/ac/clockwork-free-cloud/clockwork-mywork"
@@ -199,7 +200,7 @@ class RecentTree(QTreeWidget):
                 month_item.flags() & ~(Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
             )
             for col in range(len(self.COLUMNS)):
-                month_item.setBackground(col, QColor("#E5E7EB"))
+                month_item.setBackground(col, QColor(color("group")))
                 month_item.setFont(col, bold)
             self.addTopLevelItem(month_item)
             month_item.setExpanded(month_key not in collapsed)
@@ -214,7 +215,7 @@ class RecentTree(QTreeWidget):
                 italic = QFont()
                 italic.setItalic(True)
                 for col in range(len(self.COLUMNS)):
-                    day_item.setBackground(col, QColor("#F3F4F6"))
+                    day_item.setBackground(col, QColor(color("subgroup")))
                     day_item.setFont(col, italic)
                 month_item.addChild(day_item)
                 day_item.setExpanded(d.isoformat() not in collapsed)
@@ -372,8 +373,6 @@ class RunningList(QTreeWidget):
     COLUMNS = ["Projekt", "Task", "Beschreibung", "Läuft", ""]
     COL_PROJECT, COL_TASK, COL_DESC, COL_CLOCK, COL_STOP = range(5)
     MAX_VISIBLE_ROWS = 6
-    ROW_BACKGROUND = "#ECFDF5"
-    ROW_FOREGROUND = "#064E3B"
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -406,8 +405,8 @@ class RunningList(QTreeWidget):
                 self.COL_CLOCK, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
             for col in range(len(self.COLUMNS)):
-                item.setBackground(col, QColor(self.ROW_BACKGROUND))
-                item.setForeground(col, QColor(self.ROW_FOREGROUND))
+                item.setBackground(col, QColor(color("success_soft")))
+                item.setForeground(col, QColor(color("text")))
             self.addTopLevelItem(item)
             self.setItemWidget(item, self.COL_PROJECT, _make_project_chip_widget(log))
             stop_button = QPushButton("⏸ Stop")
@@ -474,7 +473,7 @@ class TimerWidget(QWidget):
         self.desc_input.setCompleter(self.desc_completer)
 
         self.running_label = QLabel("")
-        self.running_label.setStyleSheet("color: #047857; font-weight: bold;")
+        set_role(self.running_label, "running")
         self.running_list = RunningList(self)
         self.running_list.edit_requested.connect(self._edit_log)
         self.running_list.stop_requested.connect(self._stop_entry)
@@ -483,10 +482,11 @@ class TimerWidget(QWidget):
         self.start_button.setToolTip("Startet einen neuen Eintrag; laufende Einträge laufen weiter (Ctrl+S).")
         self.start_button.setMinimumSize(self.ACTION_BUTTON_WIDTH, self.ACTION_ROW_HEIGHT)
         self.start_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.start_button.setProperty("variant", "primary")
         self.start_button.clicked.connect(self.start_from_form)
 
         self.start_hint = QLabel("")
-        self.start_hint.setStyleSheet("color: #B45309;")
+        set_role(self.start_hint, "warn")
         self.start_hint.setVisible(False)
 
         self.quick_duration = QDoubleSpinBox()
@@ -556,7 +556,7 @@ class TimerWidget(QWidget):
         outer.addWidget(self.summary_label)
 
         recent_label = QLabel("Letzte Einträge   ·   Doppelklick zum Bearbeiten · Rechtsklick für Flags")
-        recent_label.setStyleSheet("color: #6B7280;")
+        set_role(recent_label, "muted")
         outer.addWidget(recent_label)
         outer.addWidget(self.recent_tree, 1)
 

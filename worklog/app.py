@@ -103,7 +103,7 @@ def main() -> int:
 
     conn = db_module.connect()
 
-    # Theming is opt-in; the default is the plain native Qt look. WORKLOG_THEME
+    # WORKLOG_THEME (system/light/dark)
     # env var wins, else the persisted 'ui_theme' setting, else the default.
     theme = os.environ.get("WORKLOG_THEME") or repo.get_setting(
         conn, SETTINGS_UI_THEME, DEFAULT_UI_THEME

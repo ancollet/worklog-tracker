@@ -7,7 +7,7 @@ from typing import Optional
 
 from PyQt6.QtCharts import QBarCategoryAxis, QBarSet, QChart, QChartView, QStackedBarSeries, QValueAxis
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPainter
+from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QComboBox,
     QDateEdit,
@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 from worklog import repository as repo
 from worklog.services.analytics import AggRow, Bucket, GroupBy, aggregate
 from worklog.services.rounding import format_hm_short, format_hours_decimal
+from worklog.ui.theme import color
 
 
 PRESETS = [
@@ -197,6 +198,7 @@ class AnalyticsView(QWidget):
         chart.setAnimationOptions(QChart.AnimationOption.SeriesAnimations)
 
         if not self._rows:
+            self._apply_chart_colors(chart)
             self.chart_view.setChart(chart)
             return
 
@@ -238,7 +240,21 @@ class AnalyticsView(QWidget):
 
         chart.legend().setVisible(True)
         chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
+        self._apply_chart_colors(chart)
         self.chart_view.setChart(chart)
+
+    def _apply_chart_colors(self, chart: QChart) -> None:
+        text, grid = QColor(color("text")), QColor(color("border"))
+        chart.setBackgroundBrush(QColor(color("surface")))
+        chart.setBackgroundPen(QPen(grid))
+        chart.setBackgroundRoundness(10)
+        chart.setTitleBrush(text)
+        chart.legend().setLabelColor(text)
+        for axis in chart.axes():
+            axis.setLabelsColor(QColor(color("muted")))
+            axis.setTitleBrush(text)
+            axis.setLinePenColor(grid)
+            axis.setGridLineColor(grid)
 
     # ------------------ filters ------------------
 

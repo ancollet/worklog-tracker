@@ -29,6 +29,7 @@ from worklog.services import salesforce_reconciliation as reconciliation
 from worklog.services import salesforce_registration as registration
 from worklog.services.salesforce_settings import SERVICE_TYPES, SalesforceConfiguration, load_configuration
 from worklog.ui.salesforce_call import start_salesforce_call
+from worklog.ui.theme import set_role
 
 ROUNDING_CHOICES = [
     ("Default", None),
@@ -68,7 +69,7 @@ class CustomersView(QWidget):
 
         # Abgleich geschlossener Projekte: never a dialog, only this line under the tree.
         self.sf_reconciliation_hint = QLabel("")
-        self.sf_reconciliation_hint.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self.sf_reconciliation_hint, "hint")
         self.sf_reconciliation_hint.setWordWrap(True)
         self.sf_reconciliation_hint.setVisible(False)
 
@@ -124,7 +125,7 @@ class CustomersView(QWidget):
 
     def _build_customer_panel(self) -> QWidget:
         self.cust_label = QLabel("Kunden-Details")
-        self.cust_label.setStyleSheet("font-weight: bold;")
+        set_role(self.cust_label, "title")
         self.cust_name = QLineEdit()
         self.cust_system = QComboBox()
         for label, val in BOOKING_SYSTEM_CHOICES:
@@ -139,7 +140,7 @@ class CustomersView(QWidget):
         self.cust_account_btn = QPushButton("Verbinden…")
         self.cust_account_btn.clicked.connect(self.connect_salesforce_account)
         self.cust_account_hint = QLabel("")
-        self.cust_account_hint.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self.cust_account_hint, "hint")
         self.cust_account_hint.setWordWrap(True)
         account_row = QHBoxLayout()
         account_row.setContentsMargins(0, 0, 0, 0)
@@ -166,7 +167,7 @@ class CustomersView(QWidget):
 
     def _build_project_panel(self) -> QWidget:
         self.proj_label = QLabel("Projekt-Details")
-        self.proj_label.setStyleSheet("font-weight: bold;")
+        set_role(self.proj_label, "title")
         self.proj_name = QLineEdit()
         self.color_btn = QPushButton("Farbe wählen…")
         self.color_btn.clicked.connect(self._pick_color)
@@ -176,7 +177,7 @@ class CustomersView(QWidget):
         self.proj_external_ref = QLineEdit()
         self.proj_external_ref_label = QLabel("Externe Ref.:")
         self.proj_external_ref_hint = QLabel("")
-        self.proj_external_ref_hint.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self.proj_external_ref_hint, "hint")
         self.proj_external_ref_hint.setWordWrap(True)
         # Projekte of Salesforce-Kunden: the connected Salesforce-Projekt by name instead of a
         # free text field for its ID, plus what Buchungen of this Projekt start with.

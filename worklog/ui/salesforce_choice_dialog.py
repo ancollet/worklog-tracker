@@ -31,6 +31,7 @@ from worklog.services import salesforce as sf_client
 from worklog.services import salesforce_registration as registration
 from worklog.services.salesforce_settings import SERVICE_TYPES
 from worklog.ui.salesforce_call import SalesforceCall, start_salesforce_call
+from worklog.ui.theme import set_status
 
 _COL_NAME, _COL_SERVICE_TYPE, _COL_REQUEST_TYPE = range(3)
 
@@ -160,9 +161,8 @@ class SalesforceChoiceDialog(QDialog):
     # ------------------ loading ------------------
 
     def _set_status(self, text: str, kind: str = "neutral") -> None:
-        color = {"ok": "#15803d", "error": "#b91c1c"}.get(kind, "gray")
         self.status.setText(text)
-        self.status.setStyleSheet(f"color: {color}; font-size: 11px;")
+        set_status(self.status, kind)
 
     def _load(self) -> None:
         if self._loading is not None:

@@ -41,6 +41,7 @@ from worklog.services.salesforce_settings import (
     load_configuration,
 )
 from worklog.ui.salesforce_call import SalesforceCall, start_salesforce_call
+from worklog.ui.theme import color, set_role, set_status
 
 (_COL_SELECTED, _COL_DATE, _COL_PROJECT, _COL_QUANTITY, _COL_SERVICE_TYPE, _COL_REQUEST_TYPE,
  _COL_DESCRIPTION, _COL_STATUS) = range(8)
@@ -126,7 +127,7 @@ class SalesforceBookingDialog(QDialog):
         self.table.setColumnHidden(_COL_SELECTED, len(self._rows) <= 1)
 
         self.summary = QLabel("")
-        self.summary.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self.summary, "hint")
         self.progress = QProgressBar()
         self.progress.setTextVisible(False)
         self.progress.setMaximumHeight(6)
@@ -205,13 +206,12 @@ class SalesforceBookingDialog(QDialog):
     def _set_row_status(self, row: _Row, text: str, kind: str = "neutral") -> None:
         row.status.setText(text)
         row.status.setToolTip(text)
-        color = {"ok": "#15803d", "error": "#b91c1c", "blocked": "gray"}.get(kind)
-        row.status.setForeground(QBrush(QColor(color)) if color else QBrush())
+        token = {"ok": "success", "error": "danger", "blocked": "muted"}.get(kind)
+        row.status.setForeground(QBrush(QColor(color(token))) if token else QBrush())
 
     def _set_status(self, text: str, kind: str = "neutral") -> None:
-        color = {"ok": "#15803d", "error": "#b91c1c"}.get(kind, "gray")
         self.status.setText(text)
-        self.status.setStyleSheet(f"color: {color}; font-size: 11px;")
+        set_status(self.status, kind)
 
     def _is_busy(self) -> bool:
         return self._call is not None or self._run.is_running
@@ -235,7 +235,7 @@ class SalesforceBookingDialog(QDialog):
                 widget.setEnabled(editable and row.selected.isChecked())
             greyed = entry.state == booking_run.BLOCKED
             for item in row.labels:
-                item.setForeground(QBrush(QColor("gray")) if greyed else QBrush())
+                item.setForeground(QBrush(QColor(color("muted"))) if greyed else QBrush())
             if entry is self._in_flight:
                 self._set_row_status(row, "Wird gebucht…")
             elif entry.state == booking_run.BLOCKED:

@@ -25,6 +25,7 @@ from worklog.ui.entry_context_menu import (
     delete_entries,
     keep_selection_on_right_click,
 )
+from worklog.ui.theme import color
 
 
 class LogsView(QWidget):
@@ -104,7 +105,7 @@ class LogsView(QWidget):
                 if col in (4, 5, 6):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 if col == 6 and log.is_booked:
-                    item.setForeground(QColor("#15803d"))
+                    item.setForeground(QColor(color("success")))
                     item.setToolTip(booked_cell_tooltip(log))
                 self.table.setItem(r, col, item)
         self._update_buttons()
