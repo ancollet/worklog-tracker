@@ -25,6 +25,8 @@ class _FakeResponse:
         return False
 
 
+_OPEN_STATUSES = ", ".join(f"'{status}'" for status in sf.PROJECT_OPEN_STATUSES)
+
 def _http_error(code: int, payload=None):
     body = json.dumps(payload).encode("utf-8") if payload is not None else b""
     return urllib.error.HTTPError(
@@ -468,7 +470,7 @@ def test_open_projects_query_asks_for_the_open_projects_of_that_account_only():
     assert _soql(transport.requests[1]) == (
         f"SELECT Id, {sf.PROJECT_NAME_FIELD} FROM {sf.PROJECT_OBJECT} "
         f"WHERE {sf.PROJECT_ACCOUNT_FIELD} = '001AA000001AAAAIA2' "
-        f"AND {sf.PROJECT_STATUS_FIELD} IN ('{sf.PROJECT_OPEN_STATUSES[0]}') "
+        f"AND {sf.PROJECT_STATUS_FIELD} IN ({_OPEN_STATUSES}) "
         f"ORDER BY {sf.PROJECT_NAME_FIELD}"
     )
 
@@ -538,7 +540,7 @@ def test_open_projects_among_asks_for_exactly_these_projects_and_only_the_open_o
     assert _soql(transport.requests[1]) == (
         f"SELECT Id FROM {sf.PROJECT_OBJECT} "
         f"WHERE Id IN ('{_RELAUNCH_ID}', '{_WARTUNG_ID}') "
-        f"AND {sf.PROJECT_STATUS_FIELD} IN ('{sf.PROJECT_OPEN_STATUSES[0]}')"
+        f"AND {sf.PROJECT_STATUS_FIELD} IN ({_OPEN_STATUSES})"
     )
 
 
@@ -562,7 +564,7 @@ def test_references_that_are_no_salesforce_id_count_as_closed_and_never_reach_th
     )
 
     assert still_open == {_RELAUNCH_ID}
-    assert _soql(transport.requests[1]).count("'") == 4   # the one ID and the one open status
+    assert _soql(transport.requests[1]).count("'") == 2 + 2 * len(sf.PROJECT_OPEN_STATUSES)   # the one ID and the open statuses
 
 
 def test_nothing_to_check_returns_nothing_without_asking_salesforce():

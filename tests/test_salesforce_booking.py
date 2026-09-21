@@ -269,7 +269,8 @@ def test_values_changed_in_the_dialog_apply_to_this_booking_only(conn):
 
 @pytest.mark.parametrize(
     "overrides",
-    [dict(quantity_hours=0.0), dict(quantity_hours=1.25), dict(service_type="Support"), dict(description="  ")],
+    [dict(quantity_hours=0.0), dict(quantity_hours=1.25), dict(service_type="Support"), dict(description="  "),
+     dict(description="x" * 256), dict(customer_request_type="x" * 256)],
 )
 def test_invalid_confirmed_values_are_refused_without_asking_salesforce(conn, overrides):
     log_id = _entry(conn, _project(conn))

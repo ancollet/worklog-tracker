@@ -25,7 +25,12 @@ from typing import Optional
 from worklog import repository as repo
 from worklog.db import transaction
 from worklog.models import LogEntry
-from worklog.services.salesforce import CostItem, CostItemDraft, SalesforceClient
+from worklog.services.salesforce import (
+    COST_ITEM_TEXT_MAX_LENGTH,
+    CostItem,
+    CostItemDraft,
+    SalesforceClient,
+)
 from worklog.services.salesforce_reconciliation import is_closed_in_salesforce
 from worklog.services.salesforce_registration import service_type_of
 from worklog.services.salesforce_settings import SERVICE_TYPES, SalesforceConfiguration
@@ -230,6 +235,16 @@ def prepare_booking(
         )
     if not confirmed.description.strip():
         raise BookingRefusedError(INVALID_VALUES, "Die Beschreibung darf nicht leer sein.")
+    for label, text in (
+        ("Die Beschreibung", confirmed.description),
+        ("Der Customer Request Type", confirmed.customer_request_type),
+    ):
+        if len(text.strip()) > COST_ITEM_TEXT_MAX_LENGTH:
+            raise BookingRefusedError(
+                INVALID_VALUES,
+                f"{label} ist zu lang — Salesforce nimmt höchstens {COST_ITEM_TEXT_MAX_LENGTH} Zeichen "
+                f"(aktuell {len(text.strip())}).",
+            )
     project = repo.get_project(conn, log.project_id)
     return PreparedBooking(
         log_id=confirmed.log_id,

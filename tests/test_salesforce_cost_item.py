@@ -197,7 +197,7 @@ def test_open_project_is_reported_as_open():
     soql = _soql(transport.requests[1])
     assert "FROM Project__c" in soql
     assert "Id IN ('a01AA000000proj1AA')" in soql
-    assert "Status__c IN ('Open')" in soql
+    assert "Status__c IN ('Planned', 'In Progress')" in soql
 
 
 def test_closed_or_deleted_project_is_reported_as_not_open():

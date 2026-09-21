@@ -23,18 +23,17 @@ from typing import Optional
 
 API_VERSION = "v64.0"
 
-# ---- Org-Namen des Salesforce-Projekts: ANNAHMEN, in Ticket 03 gegen die Sandbox zu bestätigen ----
-# (spec.md, offener Recherchepunkt 2). Nothing else in the app knows these names;
-# correcting them means changing exactly these lines.
+# ---- Org-Namen des Salesforce-Projekts: am 21.09.2026 per describe gegen die Sandbox bestätigt ----
+# Nothing else in the app knows these names; correcting them means changing exactly these lines.
+# A Projekt has two Account lookups (BillingAccount__c, EndCustomer__c); the Kunde in Worklog is
+# the Billing Account. Status values are Planned | In Progress | Done; all but Done count as offen.
 PROJECT_OBJECT = "Project__c"                # API name of the Salesforce-Projekt object
 PROJECT_NAME_FIELD = "Name"                  # display name of the Projekt
-PROJECT_ACCOUNT_FIELD = "Account__c"         # lookup from the Projekt to its Account
+PROJECT_ACCOUNT_FIELD = "BillingAccount__c"  # lookup from the Projekt to its Account
 PROJECT_STATUS_FIELD = "Status__c"           # status picklist on the Projekt
-PROJECT_OPEN_STATUSES = ("Open",)            # status values that mean "offen"
+PROJECT_OPEN_STATUSES = ("Planned", "In Progress")  # status values that mean "offen"
 
-# ---- Org-Namen der Kostenposition: ANNAHMEN, in Ticket 03 gegen die Sandbox zu bestätigen ----
-# (spec.md, offene Recherchepunkte 1 und 4). Object and field names follow CONTEXT.md
-# (`ProjectCostItem__c`, `Person__c`); the rest is guessed from the field labels.
+# ---- Org-Namen der Kostenposition: am 21.09.2026 per describe gegen die Sandbox bestätigt ----
 COST_ITEM_OBJECT = "ProjectCostItem__c"                  # API name of the Kostenposition object
 COST_ITEM_NUMBER_FIELD = "Name"                          # Nummer of the Kostenposition (auto-number)
 COST_ITEM_PROJECT_FIELD = "Project__c"                   # lookup to the Salesforce-Projekt
@@ -48,8 +47,9 @@ COST_ITEM_STATUS_FIELD = "Status__c"                     # status picklist
 COST_ITEM_SKILL_LEVEL_FIELD = "SkillLevel__c"            # Skill Level picklist
 COST_ITEM_LOCATION_FIELD = "Location__c"                 # Location picklist
 COST_ITEM_COUNT_AGAINST_BUDGET_FIELD = "CountAgainstBudget__c"  # Count against Budget checkbox
+COST_ITEM_TEXT_MAX_LENGTH = 255  # length of Description__c and CustomerRequestType__c in the org
 
-# Picklist API values: ANNAHMEN, in Ticket 03 gegen die Sandbox zu bestätigen.
+# Picklist API values: am 21.09.2026 per describe gegen die Sandbox bestätigt.
 # Key = Service Type in domain terms (salesforce_settings.SERVICE_TYPES), value = API value of the org.
 COST_ITEM_SERVICE_TYPE_VALUES = {"Consulting": "Consulting", "Development": "Development"}
 COST_ITEM_STATUS_OPEN = "Open"
