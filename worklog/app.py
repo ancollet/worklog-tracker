@@ -15,7 +15,7 @@ from worklog import repository as repo
 from worklog.paths import icon_path, lock_path, socket_path
 from worklog.services.timer import TimerService
 from worklog.ui.main_window import MainWindow
-from worklog.ui.theme import DEFAULT_UI_THEME, SETTINGS_UI_THEME, apply_theme
+from worklog.ui.theme import DEFAULT_UI_THEME, SETTINGS_UI_ACCENT, SETTINGS_UI_THEME, apply_theme
 from worklog.ui.tray import TrayController
 
 
@@ -108,7 +108,7 @@ def main() -> int:
     theme = os.environ.get("WORKLOG_THEME") or repo.get_setting(
         conn, SETTINGS_UI_THEME, DEFAULT_UI_THEME
     )
-    apply_theme(app, theme)
+    apply_theme(app, theme, repo.get_setting(conn, SETTINGS_UI_ACCENT))
 
     timer_service = TimerService(conn)
 

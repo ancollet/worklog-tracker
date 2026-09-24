@@ -24,6 +24,30 @@ def test_apply_theme_switches_the_colour_tokens(qapp):
         qapp.setStyleSheet("")
 
 
+def test_every_accent_overrides_the_same_tokens():
+    for _label, light, dark in theme.ACCENTS.values():
+        assert light.keys() == dark.keys() == {"accent", "accent_hover", "accent_soft"}
+
+
+def test_old_qt_material_values_keep_their_accent_colour():
+    assert theme.resolve_accent("dark_teal.xml", None) == "teal"
+    assert theme.resolve_accent("light_blue.xml", None) == "blue"
+    assert theme.resolve_accent("dark_teal.xml", "pink") == "pink"
+    assert theme.resolve_accent("system", None) == theme.DEFAULT_ACCENT
+    assert theme.resolve_accent("system", "gone") == theme.DEFAULT_ACCENT
+
+
+def test_apply_theme_uses_the_chosen_accent(qapp):
+    try:
+        theme.apply_theme(qapp, theme.DARK_THEME, "teal")
+        assert theme.color("accent") == theme.ACCENTS["teal"][2]["accent"]
+        assert theme.color("bg") == theme.DARK["bg"]
+        theme.apply_theme(qapp, theme.LIGHT_THEME, "teal")
+        assert theme.color("accent") == theme.ACCENTS["teal"][1]["accent"]
+    finally:
+        qapp.setStyleSheet("")
+
+
 def test_set_status_gives_the_label_a_role(qapp):
     label = QLabel("x")
     theme.set_status(label, "error")

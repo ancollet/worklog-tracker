@@ -48,7 +48,17 @@ from worklog.services.salesforce_settings import (
 )
 from worklog.ui.llm_cleanup import LlmCall, start_llm_call
 from worklog.ui.salesforce_call import SalesforceCall, start_salesforce_call
-from worklog.ui.theme import DEFAULT_UI_THEME, SETTINGS_UI_THEME, THEMES, apply_theme, set_role, set_status
+from worklog.ui.theme import (
+    ACCENTS,
+    DEFAULT_UI_THEME,
+    SETTINGS_UI_ACCENT,
+    SETTINGS_UI_THEME,
+    THEMES,
+    apply_theme,
+    resolve_accent,
+    set_role,
+    set_status,
+)
 
 ROUNDING_CHOICES = [
     ("Aus", 0),
@@ -94,11 +104,18 @@ class SettingsDialog(QDialog):
         ti = self.theme_combo.findData(current_theme)
         self.theme_combo.setCurrentIndex(ti if ti >= 0 else 0)
 
+        self.accent_combo = QComboBox()
+        for val, (label, _light, _dark) in ACCENTS.items():
+            self.accent_combo.addItem(label, val)
+        current_accent = resolve_accent(current_theme, repo.get_setting(conn, SETTINGS_UI_ACCENT))
+        self.accent_combo.setCurrentIndex(self.accent_combo.findData(current_accent))
+
         self.autostart_check = QCheckBox("Worklog beim Login starten")
         self.autostart_check.setChecked(autostart_desktop_path().exists())
 
         form = QFormLayout()
         form.addRow("Theme:", self.theme_combo)
+        form.addRow("Akzentfarbe:", self.accent_combo)
         form.addRow("Default-Rundung:", self.round_combo)
         form.addRow("Default-Projekt:", self.default_project)
         form.addRow(self.autostart_check)
@@ -319,10 +336,12 @@ class SettingsDialog(QDialog):
 
     def _save(self) -> None:
         theme = self.theme_combo.currentData()
+        accent = self.accent_combo.currentData()
         repo.set_setting(self.conn, SETTINGS_UI_THEME, theme)
+        repo.set_setting(self.conn, SETTINGS_UI_ACCENT, accent)
         app = QApplication.instance()
         if app is not None:
-            apply_theme(app, theme)
+            apply_theme(app, theme, accent)
         repo.set_default_round_minutes(self.conn, int(self.round_combo.currentData()))
         default_project = self.default_project.currentData()
         if default_project is not None:

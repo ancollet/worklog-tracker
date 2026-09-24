@@ -41,6 +41,34 @@ DARK = dict(
     group="#2B303B", subgroup="#222630",
 )
 
+SETTINGS_UI_ACCENT = "ui_accent"
+DEFAULT_ACCENT = "indigo"
+
+# accent name -> (label, light tokens, dark tokens); overrides accent/accent_hover/accent_soft
+ACCENTS: dict[str, tuple[str, dict, dict]] = {
+    "indigo": ("Indigo",
+               dict(accent="#4F46E5", accent_hover="#4338CA", accent_soft="#EEF2FF"),
+               dict(accent="#818CF8", accent_hover="#A5ACFB", accent_soft="#262A52")),
+    "teal": ("Teal",
+             dict(accent="#0F766E", accent_hover="#115E59", accent_soft="#E6F4F2"),
+             dict(accent="#2DD4BF", accent_hover="#5EEAD4", accent_soft="#123331")),
+    "blue": ("Blau",
+             dict(accent="#2563EB", accent_hover="#1D4ED8", accent_soft="#EFF6FF"),
+             dict(accent="#60A5FA", accent_hover="#93C5FD", accent_soft="#172A46")),
+    "cyan": ("Cyan",
+             dict(accent="#0E7490", accent_hover="#155E75", accent_soft="#E6F6FA"),
+             dict(accent="#22D3EE", accent_hover="#67E8F9", accent_soft="#0F2F38")),
+    "purple": ("Lila",
+               dict(accent="#7C3AED", accent_hover="#6D28D9", accent_soft="#F5F3FF"),
+               dict(accent="#A78BFA", accent_hover="#C4B5FD", accent_soft="#2A2150")),
+    "amber": ("Amber",
+              dict(accent="#B45309", accent_hover="#92400E", accent_soft="#FEF3C7"),
+              dict(accent="#FBBF24", accent_hover="#FCD34D", accent_soft="#3A2E12")),
+    "pink": ("Pink",
+             dict(accent="#DB2777", accent_hover="#BE185D", accent_soft="#FDF2F8"),
+             dict(accent="#F472B6", accent_hover="#F9A8D4", accent_soft="#3D1A2E")),
+}
+
 _tokens = LIGHT
 _asset_dir: Path | None = None
 _watching_system = False
@@ -74,14 +102,28 @@ def resolve_theme(app: QApplication, theme: str | None) -> str:
     return DARK_THEME if dark else LIGHT_THEME
 
 
-def apply_theme(app: QApplication, theme: str | None) -> None:
+def resolve_accent(theme: str | None, accent: str | None) -> str:
+    """Accent name to use; without a stored accent an old qt-material value
+    ("dark_teal.xml") still picks its colour."""
+    if accent in ACCENTS:
+        return accent
+    legacy = (theme or "").removesuffix(".xml").partition("_")[2]
+    return legacy if legacy in ACCENTS else DEFAULT_ACCENT
+
+
+def apply_theme(app: QApplication, theme: str | None, accent: str | None = None) -> None:
     global _tokens, _watching_system
-    _tokens = DARK if resolve_theme(app, theme) == DARK_THEME else LIGHT
+    dark = resolve_theme(app, theme) == DARK_THEME
+    _, light_accent, dark_accent = ACCENTS[resolve_accent(theme, accent)]
+    _tokens = {**DARK, **dark_accent} if dark else {**LIGHT, **light_accent}
     app.setProperty("worklog_theme", theme or SYSTEM_THEME)
+    app.setProperty("worklog_accent", accent)
     if not _watching_system:
         _watching_system = True
         app.styleHints().colorSchemeChanged.connect(
-            lambda _scheme: apply_theme(app, app.property("worklog_theme"))
+            lambda _scheme: apply_theme(
+                app, app.property("worklog_theme"), app.property("worklog_accent")
+            )
         )
     app.setStyle("Fusion")
     app.setPalette(_palette(_tokens))
