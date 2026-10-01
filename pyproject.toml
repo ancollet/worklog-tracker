@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "worklog"
 version = "0.1.0"
-description = "Time tracker / worklog desktop app for Ubuntu"
+description = "Time tracker / worklog desktop app for Ubuntu and Windows"
 requires-python = ">=3.11"
 dependencies = [
     "PyQt6>=6.7",
@@ -16,6 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-qt>=4"]
 hotkey = ["pynput>=1.7"]
+windows = ["pyinstaller>=6"]
 
 [project.scripts]
 worklog = "worklog.app:main"

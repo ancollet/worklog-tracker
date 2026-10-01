@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import sqlite3
-import sys
-from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -27,7 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from worklog import repository as repo
-from worklog.paths import autostart_desktop_path
+from worklog.paths import is_autostart_enabled, set_autostart
 from worklog.services import credentials, jira as jira_client, salesforce as sf_client
 from worklog.services import llm_cleanup
 from worklog.services.llm_settings import (
@@ -111,7 +109,7 @@ class SettingsDialog(QDialog):
         self.accent_combo.setCurrentIndex(self.accent_combo.findData(current_accent))
 
         self.autostart_check = QCheckBox("Worklog beim Login starten")
-        self.autostart_check.setChecked(autostart_desktop_path().exists())
+        self.autostart_check.setChecked(is_autostart_enabled())
 
         form = QFormLayout()
         form.addRow("Theme:", self.theme_combo)
@@ -388,9 +386,9 @@ class SettingsDialog(QDialog):
                 )
 
         try:
-            self._apply_autostart(self.autostart_check.isChecked())
+            set_autostart(self.autostart_check.isChecked())
         except OSError as exc:
-            QMessageBox.warning(self, "Autostart", f"Konnte Autostart-Datei nicht schreiben: {exc}")
+            QMessageBox.warning(self, "Autostart", f"Konnte Autostart-Eintrag nicht schreiben: {exc}")
         self.accept()
 
     def _test_jira(self) -> None:
@@ -578,18 +576,3 @@ class SettingsDialog(QDialog):
             self._llm_test = None
         super().done(result)
 
-    def _apply_autostart(self, enable: bool) -> None:
-        path: Path = autostart_desktop_path()
-        if enable:
-            exec_cmd = f"{sys.executable} -m worklog"
-            path.write_text(
-                "[Desktop Entry]\n"
-                "Type=Application\n"
-                "Name=Worklog\n"
-                f"Exec={exec_cmd}\n"
-                "X-GNOME-Autostart-enabled=true\n"
-                "NoDisplay=false\n"
-                "Terminal=false\n"
-            )
-        else:
-            path.unlink(missing_ok=True)

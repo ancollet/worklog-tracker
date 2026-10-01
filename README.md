@@ -33,6 +33,24 @@ Was passiert:
 Updaten: `git pull && ./packaging/install.sh` (idempotent via `--reinstall`).
 Deinstallieren: `./packaging/uninstall.sh` (Datenverzeichnis bleibt erhalten).
 
+## Installation (Windows, Kollegen ohne Python/uv)
+
+Einmal pro Release baut jemand mit `uv` auf einem Windows-Rechner ein
+eigenständiges `WorklogSetup.exe`, das Kollegen ohne Python/uv installieren können:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
+iscc packaging\windows\installer.iss
+```
+
+Voraussetzungen fürs Bauen: `uv` und [Inno Setup](https://jrsoftware.org/isinfo.php)
+(stellt `iscc` bereit). Das Ergebnis liegt in `packaging\windows\output\WorklogSetup.exe` —
+nur diese eine Datei an Kollegen weitergeben. Installiert ohne Admin-Rechte nach
+`%LocalAppData%\Programs\Worklog`, legt Start-Menü-Eintrag (+ optional Desktop-Icon) an.
+
+Da das `.exe` nicht signiert ist, warnt Windows SmartScreen beim ersten Start einmalig
+("Weitere Informationen" → "Trotzdem ausführen") — für ein internes Tool normal.
+
 ## Dev-Setup
 
 ```bash

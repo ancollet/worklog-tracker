@@ -2,82 +2,74 @@
 from __future__ import annotations
 
 import os
-import socket
 import sys
-from pathlib import Path
 
-from PyQt6.QtCore import QObject, QSocketNotifier, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QIcon
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from worklog import db as db_module
 from worklog import repository as repo
-from worklog.paths import icon_path, lock_path, socket_path
+from worklog.paths import icon_path
 from worklog.services.timer import TimerService
 from worklog.ui.main_window import MainWindow
 from worklog.ui.theme import DEFAULT_UI_THEME, SETTINGS_UI_ACCENT, SETTINGS_UI_THEME, apply_theme
 from worklog.ui.tray import TrayController
 
+IPC_NAME = "worklog"
+
 
 class IpcServer(QObject):
-    """Listen on a Unix socket; emit signal when another instance pings us."""
+    """Listen on a Qt local socket (named pipe on Windows, Unix socket elsewhere);
+    emit signal when another instance pings us."""
     quick_add_requested = pyqtSignal()
     show_window_requested = pyqtSignal()
 
-    def __init__(self, sock: socket.socket) -> None:
+    def __init__(self, server: QLocalServer) -> None:
         super().__init__()
-        self.sock = sock
-        self.notifier = QSocketNotifier(sock.fileno(), QSocketNotifier.Type.Read)
-        self.notifier.activated.connect(self._on_ready)
+        self.server = server
+        self.server.newConnection.connect(self._on_connection)
 
-    def _on_ready(self) -> None:
-        try:
-            client, _ = self.sock.accept()
-        except BlockingIOError:
+    def _on_connection(self) -> None:
+        conn = self.server.nextPendingConnection()
+        if conn is None:
             return
-        with client:
-            data = client.recv(64).decode("utf-8", "replace").strip()
+        conn.waitForReadyRead(200)
+        data = bytes(conn.readAll()).decode("utf-8", "replace").strip()
+        conn.disconnectFromServer()
         if data == "quick":
             self.quick_add_requested.emit()
         else:
             self.show_window_requested.emit()
 
 
-def _try_acquire_lock(lock: Path, sock_path: Path, command: str) -> socket.socket | None:
-    """Bind a Unix socket; if already bound, ping the existing instance and return None."""
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.setblocking(False)
-    try:
-        if sock_path.exists():
-            # Test whether the existing socket has a live owner
-            try:
-                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
-                    probe.settimeout(0.3)
-                    probe.connect(str(sock_path))
-                    probe.sendall(command.encode("utf-8"))
-                # Existing instance handled the request
-                sock.close()
-                return None
-            except (ConnectionRefusedError, FileNotFoundError, OSError):
-                sock_path.unlink(missing_ok=True)
-        sock.bind(str(sock_path))
-        sock.listen(1)
-        lock.write_text(str(os.getpid()))
-        return sock
-    except OSError as exc:
-        sock.close()
-        print(f"worklog: could not bind IPC socket: {exc}", file=sys.stderr)
+def _try_acquire_server(command: str) -> QLocalServer | None:
+    """Become the IPC server; if another instance already owns it, forward the command instead."""
+    probe = QLocalSocket()
+    probe.connectToServer(IPC_NAME)
+    if probe.waitForConnected(200):
+        probe.write(command.encode("utf-8"))
+        probe.waitForBytesWritten(200)
+        probe.disconnectFromServer()
         return None
+    QLocalServer.removeServer(IPC_NAME)  # clean up a stale socket left by a crashed instance
+    server = QLocalServer()
+    if not server.listen(IPC_NAME):
+        print(f"worklog: could not bind IPC server: {server.errorString()}", file=sys.stderr)
+        return None
+    return server
 
 
 def main() -> int:
     command = "quick" if "--quick" in sys.argv[1:] else "show"
 
-    sock = _try_acquire_lock(lock_path(), socket_path(), command)
-    if sock is None:
+    app = QApplication(sys.argv)
+
+    server = _try_acquire_server(command)
+    if server is None:
         return 0  # forwarded to running instance
 
-    app = QApplication(sys.argv)
     # IDs must all align for Wayland docks (COSMIC/GNOME) to associate
     # the running window with worklog.desktop:
     #   - applicationName     → Wayland app_id fallback (must be lowercase)
@@ -114,7 +106,7 @@ def main() -> int:
 
     window = MainWindow(conn, timer_service)
     tray = TrayController(conn, timer_service, window)
-    ipc = IpcServer(sock)
+    ipc = IpcServer(server)
     ipc.quick_add_requested.connect(tray.open_quick_add)
     ipc.show_window_requested.connect(tray.show_main_window)
 
@@ -128,12 +120,7 @@ def main() -> int:
     try:
         return app.exec()
     finally:
-        try:
-            sock.close()
-        except OSError:
-            pass
-        socket_path().unlink(missing_ok=True)
-        lock_path().unlink(missing_ok=True)
+        server.close()
         conn.close()
 
 
