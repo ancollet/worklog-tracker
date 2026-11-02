@@ -1,149 +1,60 @@
 # Worklog
 
-Time-Tracker / Worklog-App für Ubuntu (PyQt6 + SQLite).
+Time-Tracker / Worklog-App für Ubuntu und Windows (PyQt6 + SQLite).
 
-Features:
-- Kunden + Projekte mit optionaler Projekt-spezifischer Rundung
-- Live-Timer mit Tasks (Jira-Style: `PROJ-123`) und Beschreibung
-- Auto-Vervollständigung früherer Tasks und Beschreibungen
-- Manuelle Logs in zwei Modi: Start/End-Zeit *oder* Datum + Dauer
-- Aufrunden auf 0/5/10/15/30/60 min, global oder pro Projekt überschreibbar
+- Kunden + Projekte mit optionaler projektspezifischer Rundung
+- Live-Timer mit Tasks (Jira-Style: `PROJ-123`) und Beschreibung, Auto-Vervollständigung
+- Manuelle Logs: Start/End-Zeit *oder* Datum + Dauer
+- Aufrunden auf 0/5/10/15/30/60 min, global oder pro Projekt
 - System-Tray mit Quick-Add-Popup, Recent-Tasks, Edit/Switch
-- Analytics: Tag/Woche/Monat × Projekt/Kunde, Tabelle + Stacked-Bar-Chart, CSV-Export
+- Analytics: Tag/Woche/Monat × Projekt/Kunde, Tabelle + Chart, CSV-Export
+- Salesforce-Anbindung: Kunden/Projekte registrieren, Zeiten als Kostenposition buchen und stornieren
 
-## Voraussetzungen
+## Releases
 
-- [`uv`](https://docs.astral.sh/uv/) (Package-Manager)
-- Python 3.11+ (uv installiert es bei Bedarf automatisch)
+Fertige Pakete liegen unter [Releases](https://github.com/ancollet/worklog-tracker/releases):
 
-## Installation (Daily-Driver)
+| Datei | Installation |
+|---|---|
+| `worklog_X.Y.Z_amd64.deb` | `sudo apt install ./worklog_X.Y.Z_amd64.deb` (Ubuntu 22.04+) |
+| `WorklogSetup.exe` | Doppelklick, installiert ohne Admin-Rechte nach `%LocalAppData%\Programs\Worklog` |
 
-Für den täglichen Einsatz: `worklog` global verfügbar machen, Icon ins Dock,
-`.desktop`-Eintrag im App-Launcher:
+Das `.exe` ist nicht signiert: SmartScreen warnt beim ersten Start einmalig
+(„Weitere Informationen“ → „Trotzdem ausführen“).
 
-```bash
-./packaging/install.sh
-```
+## Voraussetzungen und Dev-Setup
 
-Was passiert:
-- `uv tool install` legt den `worklog`-CLI nach `~/.local/bin/`
-- SVG-Icon wandert nach `~/.local/share/icons/hicolor/scalable/apps/`
-- `.desktop`-Eintrag (mit Action **Quick Add**) nach `~/.local/share/applications/`
-
-Updaten: `git pull && ./packaging/install.sh` (idempotent via `--reinstall`).
-Deinstallieren: `./packaging/uninstall.sh` (Datenverzeichnis bleibt erhalten).
-
-## Releases (.deb und WorklogSetup.exe)
-
-Ein GitHub-Release (Tag `vX.Y.Z`) baut über `.github/workflows/release.yml` automatisch
-`worklog_X.Y.Z_amd64.deb` und `WorklogSetup.exe` und hängt beide an den Release.
-„Run workflow“ auf der Actions-Seite baut sie ohne Release als Artefakte.
-
-Lokal: `./packaging/linux/build-deb.sh 0.1.0` (braucht `uv` und `dpkg-deb`), Windows siehe unten.
-Installieren: `sudo apt install ./worklog_X.Y.Z_amd64.deb`.
-
-## Installation (Windows, Kollegen ohne Python/uv)
-
-Der Release-Workflow baut das `WorklogSetup.exe`; von Hand geht es mit `uv` auf einem
-Windows-Rechner so:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
-iscc packaging\windows\installer.iss
-```
-
-Voraussetzungen fürs Bauen: `uv` und [Inno Setup](https://jrsoftware.org/isinfo.php)
-(stellt `iscc` bereit). Das Ergebnis liegt in `packaging\windows\output\WorklogSetup.exe` —
-nur diese eine Datei an Kollegen weitergeben. Installiert ohne Admin-Rechte nach
-`%LocalAppData%\Programs\Worklog`, legt Start-Menü-Eintrag (+ optional Desktop-Icon) an.
-
-Da das `.exe` nicht signiert ist, warnt Windows SmartScreen beim ersten Start einmalig
-("Weitere Informationen" → "Trotzdem ausführen") — für ein internes Tool normal.
-
-## Dev-Setup
+- [`uv`](https://docs.astral.sh/uv/); Python 3.11+ installiert uv bei Bedarf selbst
 
 ```bash
-uv sync --extra dev
+uv sync --extra dev   # .venv anlegen, Worklog editable + Dev-Dependencies
+uv run worklog        # App starten
+uv run worklog --quick  # Quick-Add-Popup öffnen (läuft die App schon: dort)
+uv run pytest         # Tests
 ```
 
-`uv sync` legt `.venv/` an, installiert Worklog im Editable-Modus inkl. Dev-Dependencies und schreibt `uv.lock`.
+Daten liegen in `~/.local/share/worklog/worklog.db` (XDG) bzw. `%APPDATA%\worklog`.
 
-## Starten (Dev)
+Ohne Paket als Daily-Driver installieren (uv tool + Icon + `.desktop`):
+`./packaging/install.sh`, entfernen mit `./packaging/uninstall.sh`.
+Achtung: Worklog läuft als Single-Instance im Tray, nach einem Update die alte Instanz beenden.
+
+## Release erstellen
+
+1. Version in `pyproject.toml` und `worklog/__init__.py` hochziehen, committen, pushen.
+2. Release mit Tag anlegen:
+   ```bash
+   gh release create vX.Y.Z --generate-notes
+   ```
+3. `.github/workflows/release.yml` baut `.deb` (ubuntu-22.04) und `WorklogSetup.exe`
+   (windows-latest, Inno Setup) und hängt beide an den Release.
+
+„Run workflow“ auf der Actions-Seite baut beides ohne Release als Artefakte (Version aus `pyproject.toml`).
+
+Lokal bauen:
 
 ```bash
-uv run worklog
-```
-
-Oder explizit:
-```bash
-uv run python -m worklog
-```
-
-Daten landen in `~/.local/share/worklog/worklog.db` (XDG).
-
-Mit dem Flag `--quick` öffnet sich direkt das Quick-Add-Popup, falls die App schon läuft:
-```bash
-uv run worklog --quick
-```
-(Lässt sich auf einen globalen Hotkey im Desktop-Environment binden.)
-
-## Tests
-
-```bash
-uv run pytest
-```
-
-Optional verbose:
-```bash
-uv run pytest -v
-```
-
-## Tastenkürzel im Hauptfenster
-
-| Shortcut | Aktion |
-|----------|--------|
-| `Ctrl+S` | Neuen Eintrag aus dem Formular starten (stoppt nichts) |
-| `Ctrl+N` | Timer-Tab fokussieren |
-| `Ctrl+L` | Add-Log-Dialog |
-
-## Tray / Panel-Applet
-
-Linksklick auf das Tray-Icon öffnet immer das frameless Quick-Add-Popup
-direkt am Panel — fungiert damit als minimales Tracking-Applet:
-
-- **Start ▶** (idle) bzw. **Wechseln ↻** (running) — startet/wechselt Task
-- **⏸ Stop** — beendet den aktiven Timer (nur sichtbar wenn läuft)
-- **⏰ Stunden nachtragen…** — öffnet den manuellen Log-Dialog
-
-| Aktion | Verhalten |
-|--------|-----------|
-| Linksklick | Quick-Add-Popup (mit Stop/Add-Hours-Buttons) |
-| Mittelklick | Timer toggeln |
-| Rechtsklick | Kontextmenü mit Recent Tasks, Edit, Switch, Settings |
-
-## Projektstruktur
-
-```
-worklog/
-  app.py               Entry: QApplication + Single-Instance + Tray-Wiring
-  db.py                SQLite-Schema + Migrationen
-  models.py            Dataclasses
-  repository.py        Alle Queries (UI berührt SQL nie direkt)
-  paths.py             XDG-Pfade
-  services/
-    timer.py           TimerService: start/stop, persistente Running-Entry
-    rounding.py        round_up_seconds + Format-Helper
-    analytics.py       Aggregations-Queries
-  ui/
-    main_window.py     Tabs: Timer | Logs | Kunden | Analytics
-    timer_widget.py    Live-Timer
-    log_dialog.py      Add/Edit-Log mit zwei Modi
-    logs_view.py       Logs-Tabelle
-    customers_view.py  Kunden/Projekte-Tree
-    analytics_view.py  Analytics + Bar-Chart
-    settings_dialog.py Default-Rundung, Default-Projekt, Autostart
-    tray.py            System-Tray
-    quick_add.py       Frameless Quick-Add-Popup
-    completers.py      DB-backed QCompleter
-tests/                 Pytest-Suite (rounding, repository, timer, analytics)
+./packaging/linux/build-deb.sh 0.1.0                              # braucht dpkg-deb
+powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1  # Windows, dann:
+iscc packaging\windows\installer.iss                              # -> packaging\windows\output\WorklogSetup.exe
 ```
