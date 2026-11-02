@@ -489,7 +489,7 @@ class SettingsDialog(QDialog):
             return
         self._set_sf_person_status("Suche…")
         self._sf_search = self._start_sf_call(
-            creds, lambda client: client.search_active_users(text), self._on_sf_search_finished
+            creds, lambda client: client.search_users(text), self._on_sf_search_finished
         )
         self._update_sf_person_search_enabled()
 
@@ -512,7 +512,7 @@ class SettingsDialog(QDialog):
         if result:
             self._set_sf_person_status("Person in der Liste anklicken, um sie zu übernehmen.")
         else:
-            self._set_sf_person_status("Keine aktive Person zu dieser Eingabe gefunden.")
+            self._set_sf_person_status("Keine Person zu dieser Eingabe gefunden.")
 
     def _choose_sf_person(self, item: QListWidgetItem) -> None:
         person = item.data(Qt.ItemDataRole.UserRole)

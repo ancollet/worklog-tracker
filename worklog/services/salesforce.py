@@ -96,8 +96,8 @@ class SalesforceCredentials:
 
 
 @dataclass(slots=True, frozen=True)
-class ActiveUser:
-    """An active user of the org — a candidate for the leistende Person."""
+class SalesforceUser:
+    """A user of the org (active or not) — a candidate for the leistende Person."""
 
     id: str
     name: str
@@ -291,8 +291,10 @@ class SalesforceClient:
         """Sign in and make one authenticated call."""
         self._call("GET", f"/services/data/{API_VERSION}/")
 
-    def search_active_users(self, text: str, limit: int = 20) -> list[ActiveUser]:
-        """Active users whose name or e-mail contains `text`, at most `limit` of them."""
+    def search_users(self, text: str, limit: int = 20) -> list[SalesforceUser]:
+        """Users whose name or e-mail contains `text`, at most `limit` of them.
+
+        Inactive users count too: a leistende Person may have left the org."""
         text = text.strip()
         if not text:
             return []
@@ -300,11 +302,11 @@ class SalesforceClient:
         pattern = "%" + _escape_like(text) + "%"
         records = self._query(
             "SELECT Id, Name, Email FROM User "
-            f"WHERE IsActive = true AND (Name LIKE '{pattern}' OR Email LIKE '{pattern}') "
+            f"WHERE Name LIKE '{pattern}' OR Email LIKE '{pattern}' "
             f"ORDER BY Name LIMIT {limit}"
         )
         return [
-            ActiveUser(id=str(r["Id"]), name=str(r.get("Name") or ""), email=str(r.get("Email") or ""))
+            SalesforceUser(id=str(r["Id"]), name=str(r.get("Name") or ""), email=str(r.get("Email") or ""))
             for r in records
         ]
 

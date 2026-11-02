@@ -224,7 +224,7 @@ def test_instance_url_without_scheme_is_a_readable_error_without_network():
     assert transport.requests == []
 
 
-# ---- aktive User suchen (leistende Person) ----
+# ---- User suchen (leistende Person), inaktive eingeschlossen ----
 
 def _query_result(*records):
     return _FakeResponse({"totalSize": len(records), "done": True, "records": [
@@ -238,40 +238,38 @@ def _soql(req) -> str:
     return urllib.parse.parse_qs(parsed.query, strict_parsing=True)["q"][0]
 
 
-def test_search_active_users_returns_id_name_and_email():
+def test_search_users_returns_id_name_and_email():
     transport = _FakeTransport(_token(), _query_result(
         {"Id": "005AA0000012345IAA", "Name": "Anna Collet", "Email": "anna@example.com"},
         {"Id": "005AA0000067890IAA", "Name": "Annabel Roth", "Email": None},
     ))
 
-    users = sf.SalesforceClient(_creds(), opener=transport).search_active_users("anna")
+    users = sf.SalesforceClient(_creds(), opener=transport).search_users("anna")
 
     assert users == [
-        sf.ActiveUser(id="005AA0000012345IAA", name="Anna Collet", email="anna@example.com"),
-        sf.ActiveUser(id="005AA0000067890IAA", name="Annabel Roth", email=""),
+        sf.SalesforceUser(id="005AA0000012345IAA", name="Anna Collet", email="anna@example.com"),
+        sf.SalesforceUser(id="005AA0000067890IAA", name="Annabel Roth", email=""),
     ]
     assert transport.requests[1].get_method() == "GET"
 
 
-def test_search_asks_only_for_active_users_matching_name_or_email_with_a_limit():
+def test_search_asks_for_users_matching_name_or_email_with_a_limit():
     transport = _FakeTransport(_token(), _query_result())
 
-    sf.SalesforceClient(_creds(), opener=transport).search_active_users("  anna ", limit=7)
+    sf.SalesforceClient(_creds(), opener=transport).search_users("  anna ", limit=7)
 
     soql = _soql(transport.requests[1])
     assert "FROM User" in soql
-    assert "IsActive = true" in soql
+    assert "IsActive" not in soql  # inactive users are candidates too
     assert "Name LIKE '%anna%'" in soql
     assert "Email LIKE '%anna%'" in soql
-    # the OR must not swallow the IsActive condition
-    assert "IsActive = true AND (Name LIKE '%anna%' OR Email LIKE '%anna%')" in soql
     assert soql.endswith("ORDER BY Name LIMIT 7")
 
 
 def test_apostrophe_in_search_text_cannot_break_out_of_the_string():
     transport = _FakeTransport(_token(), _query_result())
 
-    sf.SalesforceClient(_creds(), opener=transport).search_active_users("O'Brien")
+    sf.SalesforceClient(_creds(), opener=transport).search_users("O'Brien")
 
     soql = _soql(transport.requests[1])
     assert r"Name LIKE '%O\'Brien%'" in soql
@@ -281,20 +279,19 @@ def test_apostrophe_in_search_text_cannot_break_out_of_the_string():
 def test_injection_attempt_stays_inside_the_string_literal():
     transport = _FakeTransport(_token(), _query_result())
 
-    sf.SalesforceClient(_creds(), opener=transport).search_active_users(
+    sf.SalesforceClient(_creds(), opener=transport).search_users(
         "x%' OR IsActive = false OR Name LIKE '"
     )
 
     soql = _soql(transport.requests[1])
     # every apostrophe of the input is escaped, so only our own four quotes delimit literals
     assert soql.replace(r"\'", "").count("'") == 4
-    assert "IsActive = true AND (" in soql
 
 
 def test_backslash_is_escaped_before_the_apostrophe():
     transport = _FakeTransport(_token(), _query_result())
 
-    sf.SalesforceClient(_creds(), opener=transport).search_active_users("a\\' OR Id != '")
+    sf.SalesforceClient(_creds(), opener=transport).search_users("a\\' OR Id != '")
 
     soql = _soql(transport.requests[1])
     # input \' must become \\ + \' — not \\' which would close the literal
@@ -304,7 +301,7 @@ def test_backslash_is_escaped_before_the_apostrophe():
 def test_like_wildcards_in_search_text_are_taken_literally():
     transport = _FakeTransport(_token(), _query_result())
 
-    sf.SalesforceClient(_creds(), opener=transport).search_active_users("a_b%c")
+    sf.SalesforceClient(_creds(), opener=transport).search_users("a_b%c")
 
     assert r"Name LIKE '%a\_b\%c%'" in _soql(transport.requests[1])
 
@@ -312,7 +309,7 @@ def test_like_wildcards_in_search_text_are_taken_literally():
 def test_line_breaks_and_double_quotes_in_search_text_are_escaped():
     transport = _FakeTransport(_token(), _query_result())
 
-    sf.SalesforceClient(_creds(), opener=transport).search_active_users('a\n"b\r\tc')
+    sf.SalesforceClient(_creds(), opener=transport).search_users('a\n"b\r\tc')
 
     soql = _soql(transport.requests[1])
     assert "\n" not in soql and "\r" not in soql and "\t" not in soql
@@ -322,7 +319,7 @@ def test_line_breaks_and_double_quotes_in_search_text_are_escaped():
 def test_blank_search_text_returns_nothing_without_asking_salesforce():
     transport = _FakeTransport()
 
-    assert sf.SalesforceClient(_creds(), opener=transport).search_active_users("   ") == []
+    assert sf.SalesforceClient(_creds(), opener=transport).search_users("   ") == []
     assert transport.requests == []
 
 
@@ -330,8 +327,8 @@ def test_limit_is_kept_within_sane_bounds():
     transport = _FakeTransport(_token(), _query_result(), _query_result())
     client = sf.SalesforceClient(_creds(), opener=transport)
 
-    client.search_active_users("a", limit=0)
-    client.search_active_users("a", limit=100000)
+    client.search_users("a", limit=0)
+    client.search_users("a", limit=100000)
 
     assert _soql(transport.requests[1]).endswith("LIMIT 1")
     assert _soql(transport.requests[2]).endswith("LIMIT 200")
@@ -340,14 +337,14 @@ def test_limit_is_kept_within_sane_bounds():
 def test_search_without_hits_returns_an_empty_list():
     transport = _FakeTransport(_token(), _query_result())
 
-    assert sf.SalesforceClient(_creds(), opener=transport).search_active_users("niemand") == []
+    assert sf.SalesforceClient(_creds(), opener=transport).search_users("niemand") == []
 
 
 def test_network_error_during_search_raises_network_error():
     transport = _FakeTransport(_token(), urllib.error.URLError("Network is unreachable"))
 
     with pytest.raises(sf.SalesforceNetworkError) as excinfo:
-        sf.SalesforceClient(_creds(), opener=transport).search_active_users("anna")
+        sf.SalesforceClient(_creds(), opener=transport).search_users("anna")
 
     assert "Network is unreachable" in str(excinfo.value)
 
@@ -358,7 +355,7 @@ def test_org_error_during_search_carries_the_salesforce_text():
     ]))
 
     with pytest.raises(sf.SalesforceOrgError) as excinfo:
-        sf.SalesforceClient(_creds(), opener=transport).search_active_users("anna")
+        sf.SalesforceClient(_creds(), opener=transport).search_users("anna")
 
     assert "is not supported" in str(excinfo.value)
 
@@ -367,7 +364,7 @@ def test_unexpected_query_answer_is_a_readable_error():
     transport = _FakeTransport(_token(), _FakeResponse({"something": "else"}))
 
     with pytest.raises(sf.SalesforceError):
-        sf.SalesforceClient(_creds(), opener=transport).search_active_users("anna")
+        sf.SalesforceClient(_creds(), opener=transport).search_users("anna")
 
 
 # ---------- Accounts mit offenen Projekten (Registrieren) ----------
