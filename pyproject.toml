@@ -16,7 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-qt>=4"]
 hotkey = ["pynput>=1.7"]
-windows = ["pyinstaller>=6"]
+build = ["pyinstaller>=6"]
 
 [project.scripts]
 worklog = "worklog.app:main"

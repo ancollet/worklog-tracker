@@ -26,3 +26,4 @@ __pycache__/
 # Build artifacts
 build/
 dist/
+*.spec

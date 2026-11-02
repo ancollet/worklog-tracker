@@ -33,10 +33,19 @@ Was passiert:
 Updaten: `git pull && ./packaging/install.sh` (idempotent via `--reinstall`).
 Deinstallieren: `./packaging/uninstall.sh` (Datenverzeichnis bleibt erhalten).
 
+## Releases (.deb und WorklogSetup.exe)
+
+Ein GitHub-Release (Tag `vX.Y.Z`) baut über `.github/workflows/release.yml` automatisch
+`worklog_X.Y.Z_amd64.deb` und `WorklogSetup.exe` und hängt beide an den Release.
+„Run workflow“ auf der Actions-Seite baut sie ohne Release als Artefakte.
+
+Lokal: `./packaging/linux/build-deb.sh 0.1.0` (braucht `uv` und `dpkg-deb`), Windows siehe unten.
+Installieren: `sudo apt install ./worklog_X.Y.Z_amd64.deb`.
+
 ## Installation (Windows, Kollegen ohne Python/uv)
 
-Einmal pro Release baut jemand mit `uv` auf einem Windows-Rechner ein
-eigenständiges `WorklogSetup.exe`, das Kollegen ohne Python/uv installieren können:
+Der Release-Workflow baut das `WorklogSetup.exe`; von Hand geht es mit `uv` auf einem
+Windows-Rechner so:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1

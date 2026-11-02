@@ -613,6 +613,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+build = [
+    { name = "pyinstaller" },
+]
 dev = [
     { name = "pytest" },
     { name = "pytest-qt" },
@@ -620,21 +623,18 @@ dev = [
 hotkey = [
     { name = "pynput" },
 ]
-windows = [
-    { name = "pyinstaller" },
-]
 
 [package.metadata]
 requires-dist = [
     { name = "keyring", specifier = ">=24" },
-    { name = "pyinstaller", marker = "extra == 'windows'", specifier = ">=6" },
+    { name = "pyinstaller", marker = "extra == 'build'", specifier = ">=6" },
     { name = "pynput", marker = "extra == 'hotkey'", specifier = ">=1.7" },
     { name = "pyqt6", specifier = ">=6.7" },
     { name = "pyqt6-charts", specifier = ">=6.7" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pytest-qt", marker = "extra == 'dev'", specifier = ">=4" },
 ]
-provides-extras = ["dev", "hotkey", "windows"]
+provides-extras = ["dev", "hotkey", "build"]
 
 [[package]]
 name = "zipp"

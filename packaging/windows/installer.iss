@@ -5,7 +5,9 @@
 ; No admin rights needed: installs per-user into %LocalAppData%\Programs\Worklog.
 
 #define MyAppName "Worklog"
-#define MyAppVersion "0.1.0"
+#ifndef MyAppVersion
+#define MyAppVersion "0.1.0"   ; CI overrides this with /DMyAppVersion=<tag>
+#endif
 #define MyAppExeName "Worklog.exe"
 
 [Setup]

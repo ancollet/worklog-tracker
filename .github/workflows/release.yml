@@ -1,0 +1,58 @@
+name: Release
+
+# Builds the .deb and WorklogSetup.exe for every published GitHub release and attaches
+# them to it. "Run workflow" builds them as downloadable artifacts without a release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        # tag v1.2.3 -> 1.2.3; manual runs fall back to pyproject.toml
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"
+          else v="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  deb:
+    needs: version
+    runs-on: ubuntu-22.04 # oldest glibc the binary has to run on
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: ./packaging/linux/build-deb.sh "${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/*.deb
+      - if: github.event_name == 'release'
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.deb --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  windows:
+    needs: version
+    runs-on: windows-latest # ships Inno Setup 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
+      - run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ needs.version.outputs.version }} packaging\windows\installer.iss'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-setup
+          path: packaging/windows/output/WorklogSetup.exe
+      - if: github.event_name == 'release'
+        run: gh release upload "$env:GITHUB_REF_NAME" packaging\windows\output\WorklogSetup.exe --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

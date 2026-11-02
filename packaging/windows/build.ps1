@@ -12,14 +12,14 @@ $ErrorActionPreference = "Stop"
 $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
 
-uv sync --extra windows
+uv sync --extra build
 
 uv run pyinstaller --noconfirm --windowed --name Worklog `
   --paths . `
   --collect-all PyQt6 `
   --add-data "worklog/resources/icons;worklog/resources/icons" `
   --hidden-import winreg `
-  packaging/windows/run_worklog.py
+  packaging/run_worklog.py
 
 Write-Host ""
 Write-Host "Build fertig: dist\Worklog\Worklog.exe"
