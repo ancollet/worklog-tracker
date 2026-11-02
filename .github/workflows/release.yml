@@ -1,6 +1,6 @@
 name: Release
 
-# Builds the .deb and WorklogSetup.exe for every published GitHub release and attaches
+# Builds the .deb, WorklogSetup.exe and the macOS .dmg for every published GitHub release and attaches
 # them to it. "Run workflow" builds them as downloadable artifacts without a release.
 on:
   release:
@@ -54,5 +54,21 @@ jobs:
           path: packaging/windows/output/WorklogSetup.exe
       - if: github.event_name == 'release'
         run: gh release upload "$env:GITHUB_REF_NAME" packaging\windows\output\WorklogSetup.exe --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  macos:
+    needs: version
+    runs-on: macos-latest # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: ./packaging/macos/build-dmg.sh "${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: dist/*.dmg
+      - if: github.event_name == 'release'
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.dmg --clobber
         env:
           GH_TOKEN: ${{ github.token }}

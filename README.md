@@ -18,9 +18,12 @@ Fertige Pakete liegen unter [Releases](https://github.com/ancollet/worklog-track
 |---|---|
 | `worklog_X.Y.Z_amd64.deb` | `sudo apt install ./worklog_X.Y.Z_amd64.deb` (Ubuntu 22.04+) |
 | `WorklogSetup.exe` | Doppelklick, installiert ohne Admin-Rechte nach `%LocalAppData%\Programs\Worklog` |
+| `Worklog-X.Y.Z-arm64.dmg` | Öffnen, `Worklog.app` nach `Applications` ziehen (Apple Silicon) |
 
 Das `.exe` ist nicht signiert: SmartScreen warnt beim ersten Start einmalig
 („Weitere Informationen“ → „Trotzdem ausführen“).
+Die `.app` ist ebenfalls nicht signiert: beim ersten Start Rechtsklick → „Öffnen“, oder
+`xattr -d com.apple.quarantine /Applications/Worklog.app`.
 
 ## Voraussetzungen und Dev-Setup
 
@@ -46,8 +49,8 @@ Achtung: Worklog läuft als Single-Instance im Tray, nach einem Update die alte 
    ```bash
    gh release create vX.Y.Z --generate-notes
    ```
-3. `.github/workflows/release.yml` baut `.deb` (ubuntu-22.04) und `WorklogSetup.exe`
-   (windows-latest, Inno Setup) und hängt beide an den Release.
+3. `.github/workflows/release.yml` baut `.deb` (ubuntu-22.04), `WorklogSetup.exe`
+   (windows-latest, Inno Setup) und `.dmg` (macos-latest) und hängt alle drei an den Release.
 
 „Run workflow“ auf der Actions-Seite baut beides ohne Release als Artefakte (Version aus `pyproject.toml`).
 
@@ -55,6 +58,7 @@ Lokal bauen:
 
 ```bash
 ./packaging/linux/build-deb.sh 0.1.0                              # braucht dpkg-deb
+./packaging/macos/build-dmg.sh 0.1.0                              # auf macOS
 powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1  # Windows, dann:
 iscc packaging\windows\installer.iss                              # -> packaging\windows\output\WorklogSetup.exe
 ```
